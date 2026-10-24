@@ -24,9 +24,12 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
 import { Textarea } from "@/components/ui/textarea";
 
+const COLLABORATOR_CREDITS = "@m1ndcycle · @christinedenouden";
 const DEFAULT_CAPTION = `Casa Armazada · Our home overlooking the Atlantic · Algarve, Portugal
 
-A vision held for five years and brought to life through purposeful action, trust and inner alignment — a home and a way of life rooted in freedom and nature.`;
+A vision held for five years and brought to life through purposeful action, trust and inner alignment — a home and a way of life rooted in freedom and nature.
+
+${COLLABORATOR_CREDITS}`;
 const DEFAULT_COLLABORATORS = ["m1ndcycle", "christinedenouden"];
 
 type LibraryItem = {
@@ -59,6 +62,7 @@ type DriveMediaItem = {
 };
 
 type LibraryFilter = "unpublished" | "published";
+type SortDirection = "asc" | "desc";
 
 type Configuration = {
   instagram: boolean;
@@ -101,6 +105,14 @@ function formatMediaDate(timestamp: number) {
     month: "short",
     year: "numeric",
   }).format(timestamp);
+}
+
+function withCollaboratorCredits(value: string) {
+  if (value.includes("@christinedenouden")) return value;
+  if (value.includes("@m1ndcycle")) {
+    return value.replace("@m1ndcycle", COLLABORATOR_CREDITS);
+  }
+  return `${value.trimEnd()}\n\n${COLLABORATOR_CREDITS}`;
 }
 
 async function makeItem(file: File): Promise<LibraryItem | null> {
@@ -183,12 +195,13 @@ export default function Home() {
   const [libraryNotice, setLibraryNotice] = useState("");
   const [isLoadingDrive, setIsLoadingDrive] = useState(false);
   const [libraryFilter, setLibraryFilter] = useState<LibraryFilter>("unpublished");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const folderInput = useRef<HTMLInputElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const storedCaption = window.localStorage.getItem("armazada-caption");
-    if (storedCaption) setCaption(storedCaption);
+    if (storedCaption) setCaption(withCollaboratorCredits(storedCaption));
   }, []);
 
   useEffect(() => {
@@ -207,15 +220,27 @@ export default function Home() {
       );
   }, []);
 
-  const selected = useMemo(() => items.filter((item) => item.selected), [items]);
+  const sortedItems = useMemo(
+    () =>
+      [...items].sort((left, right) => {
+        if (!left.displayDate && right.displayDate) return 1;
+        if (left.displayDate && !right.displayDate) return -1;
+        const comparison = left.displayDate - right.displayDate;
+        if (comparison === 0) return compareFileNames(left, right);
+        return sortDirection === "asc" ? comparison : -comparison;
+      }),
+    [items, sortDirection],
+  );
+  const selected = useMemo(
+    () => sortedItems.filter((item) => item.selected),
+    [sortedItems],
+  );
   const visibleItems = useMemo(
     () =>
-      items
-        .filter((item) =>
-          libraryFilter === "published" ? item.status === "published" : item.status !== "published",
-        )
-        .sort(compareFileNames),
-    [items, libraryFilter],
+      sortedItems.filter((item) =>
+        libraryFilter === "published" ? item.status === "published" : item.status !== "published",
+      ),
+    [sortedItems, libraryFilter],
   );
   const visibleSelected = useMemo(
     () => visibleItems.filter((item) => item.selected),
@@ -657,10 +682,15 @@ export default function Home() {
                         Geplaatst · {publishedCount}
                       </button>
                     </div>
-                    <div className="flex items-center gap-1 text-xs text-[#648087]">
+                    <button
+                      type="button"
+                      className="flex items-center gap-1 rounded-full px-2 py-1 text-xs font-medium text-[#52747b] transition hover:bg-[#edf5f4] hover:text-[#123f48]"
+                      onClick={() => setSortDirection((current) => (current === "asc" ? "desc" : "asc"))}
+                      aria-label={`Sorteer datum ${sortDirection === "asc" ? "nieuw naar oud" : "oud naar nieuw"}`}
+                    >
                       <SlidersHorizontal className="size-3.5" />
-                      Bestandsnaam A–Z
-                    </div>
+                      Datum {sortDirection === "asc" ? "oud–nieuw" : "nieuw–oud"}
+                    </button>
                   </div>
                   {libraryFilter === "unpublished" && visibleItems.length > 0 ? (
                     <label className="mt-3 flex cursor-pointer items-center gap-3 text-sm font-medium text-[#163d46]">
