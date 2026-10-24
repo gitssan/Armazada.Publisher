@@ -15,6 +15,13 @@
       "when": 1792856303852,
       "tag": "0001_powerful_ikaris",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1792857089281,
+      "tag": "0002_misty_harry_osborn",
+      "breakpoints": true
     }
   ]
 }

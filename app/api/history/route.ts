@@ -1,4 +1,4 @@
-import { findPublishedFingerprints } from "@/db/media-history";
+import { findPublishedFingerprints, findRemovedFingerprints } from "@/db/media-history";
 
 export async function POST(request: Request) {
   const body = (await request.json().catch(() => ({}))) as { fingerprints?: unknown };
@@ -9,8 +9,11 @@ export async function POST(request: Request) {
     (value): value is string => typeof value === "string" && value.length > 0 && value.length <= 1024,
   );
   try {
-    const published = await findPublishedFingerprints(fingerprints);
-    return Response.json({ published }, { headers: { "Cache-Control": "no-store" } });
+    const [published, removed] = await Promise.all([
+      findPublishedFingerprints(fingerprints),
+      findRemovedFingerprints(fingerprints),
+    ]);
+    return Response.json({ published, removed }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Geschiedenis laden is mislukt.";
     return Response.json({ error: message }, { status: 503 });

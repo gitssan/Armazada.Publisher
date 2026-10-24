@@ -8,6 +8,9 @@ export const publishedMedia = sqliteTable("published_media", {
   mediaType: text("media_type").notNull(),
   instagramMediaId: text("instagram_media_id").notNull(),
   publishedAt: integer("published_at").notNull(),
+  instagramStatus: text("instagram_status").notNull().default("active"),
+  instagramCheckedAt: integer("instagram_checked_at"),
+  instagramRemovedAt: integer("instagram_removed_at"),
 });
 
 export const mediaPreferences = sqliteTable("media_preferences", {

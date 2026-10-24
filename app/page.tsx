@@ -17,6 +17,7 @@ import {
   Send,
   SlidersHorizontal,
   EyeOff,
+  Unlink,
   Trash2,
   UploadCloud,
 } from "lucide-react";
@@ -50,7 +51,7 @@ type LibraryItem = {
   favorite: boolean;
   forgotten: boolean;
   selected: boolean;
-  status: "idle" | "publishing" | "published" | "error";
+  status: "idle" | "publishing" | "published" | "removed" | "error";
 };
 
 type DriveMediaItem = {
@@ -65,7 +66,7 @@ type DriveMediaItem = {
   dateKind: "taken" | "file";
 };
 
-type LibraryFilter = "unpublished" | "published" | "favorite" | "forgotten";
+type LibraryFilter = "unpublished" | "published" | "removed" | "favorite" | "forgotten";
 type MediaKindFilter = "all" | "image" | "video";
 type SortDirection = "asc" | "desc";
 
@@ -77,6 +78,15 @@ type Configuration = {
 };
 
 type PublishResult = {
+  error?: string;
+};
+
+type InstagramSyncResult = {
+  active?: string[];
+  removed?: string[];
+  checkedAt?: number;
+  instagramPostCount?: number;
+  otherInstagramPosts?: number;
   error?: string;
 };
 
@@ -201,6 +211,8 @@ export default function Home() {
   const [notice, setNotice] = useState("");
   const [libraryNotice, setLibraryNotice] = useState("");
   const [isLoadingDrive, setIsLoadingDrive] = useState(false);
+  const [isSyncingInstagram, setIsSyncingInstagram] = useState(false);
+  const [instagramSyncNotice, setInstagramSyncNotice] = useState("");
   const [libraryFilter, setLibraryFilter] = useState<LibraryFilter>("unpublished");
   const [mediaKindFilter, setMediaKindFilter] = useState<MediaKindFilter>("all");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
@@ -221,7 +233,7 @@ export default function Home() {
       .then(async (response) => (await response.json()) as Configuration)
       .then((status) => {
         setConfiguration(status);
-        if (status.googleDrive) void loadDriveMedia();
+        if (status.googleDrive) void loadDriveMedia(status.instagram);
       })
       .catch(() =>
         setConfiguration({ instagram: false, temporaryMedia: false, googleDrive: false, ready: false }),
@@ -252,11 +264,13 @@ export default function Home() {
         const matchesLibraryFilter =
           libraryFilter === "published"
             ? item.status === "published" && !item.forgotten
-            : libraryFilter === "favorite"
-              ? item.favorite && !item.forgotten
-              : libraryFilter === "forgotten"
-                ? item.forgotten
-                : item.status !== "published" && !item.forgotten;
+            : libraryFilter === "removed"
+              ? item.status === "removed" && !item.forgotten
+              : libraryFilter === "favorite"
+                ? item.favorite && !item.forgotten
+                : libraryFilter === "forgotten"
+                  ? item.forgotten
+                  : item.status !== "published" && !item.forgotten;
         const matchesKind = mediaKindFilter === "all" || item.kind === mediaKindFilter;
         return matchesLibraryFilter && matchesKind;
       }),
@@ -274,6 +288,9 @@ export default function Home() {
   const publishedCount = items.filter(
     (item) => item.status === "published" && !item.forgotten,
   ).length;
+  const removedCount = items.filter(
+    (item) => item.status === "removed" && !item.forgotten,
+  ).length;
   const favoriteCount = items.filter((item) => item.favorite && !item.forgotten).length;
   const forgottenCount = items.filter((item) => item.forgotten).length;
   const allSelected =
@@ -288,18 +305,67 @@ export default function Home() {
         body: JSON.stringify({ fingerprints: candidates.map((item) => item.fingerprint) }),
       });
       if (!response.ok) return;
-      const result = (await response.json()) as { published?: string[] };
+      const result = (await response.json()) as { published?: string[]; removed?: string[] };
       const published = new Set(result.published || []);
-      if (!published.size) return;
+      const removed = new Set(result.removed || []);
       setItems((current) =>
-        current.map((item) =>
-          published.has(item.fingerprint)
-            ? { ...item, status: "published", selected: false }
-            : item,
-        ),
+        current.map((item) => {
+          if (published.has(item.fingerprint)) {
+            return { ...item, status: "published", selected: false };
+          }
+          if (removed.has(item.fingerprint)) {
+            return { ...item, status: "removed", selected: false };
+          }
+          return item;
+        }),
       );
     } catch {
       // De mediabibliotheek blijft bruikbaar wanneer de historie tijdelijk niet beschikbaar is.
+    }
+  }
+
+  async function syncInstagram(candidates: LibraryItem[] = items) {
+    if (isSyncingInstagram) return;
+    setIsSyncingInstagram(true);
+    setInstagramSyncNotice("Instagram wordt vergeleken met de app…");
+    try {
+      const response = await fetch("/api/instagram-sync", { method: "POST" });
+      const result = (await response.json().catch(() => ({}))) as InstagramSyncResult;
+      if (!response.ok) throw new Error(result.error || "Instagram controleren is mislukt.");
+
+      const active = new Set(result.active || []);
+      const removed = new Set(result.removed || []);
+      const candidateFingerprints = new Set(candidates.map((item) => item.fingerprint));
+      setItems((current) =>
+        current.map((item) => {
+          if (!candidateFingerprints.has(item.fingerprint)) return item;
+          if (active.has(item.fingerprint)) {
+            return { ...item, status: "published", selected: false };
+          }
+          if (removed.has(item.fingerprint)) {
+            return { ...item, status: "removed", selected: false };
+          }
+          return item;
+        }),
+      );
+
+      const checkedAt = result.checkedAt ? new Date(result.checkedAt) : new Date();
+      const time = new Intl.DateTimeFormat("nl-NL", {
+        hour: "2-digit",
+        minute: "2-digit",
+      }).format(checkedAt);
+      const activeCount = active.size;
+      const removedTotal = removed.size;
+      const otherCount = result.otherInstagramPosts || 0;
+      setInstagramSyncNotice(
+        `Instagram gecontroleerd om ${time} · ${activeCount} app-${activeCount === 1 ? "post" : "posts"} aanwezig · ${removedTotal} verwijderd · ${otherCount} overige Instagram-${otherCount === 1 ? "post" : "posts"}.`,
+      );
+    } catch (error) {
+      setInstagramSyncNotice(
+        error instanceof Error ? `Instagram-controle mislukt: ${error.message}` : "Instagram controleren is mislukt.",
+      );
+    } finally {
+      setIsSyncingInstagram(false);
     }
   }
 
@@ -375,7 +441,7 @@ export default function Home() {
     }
   }
 
-  async function loadDriveMedia() {
+  async function loadDriveMedia(syncAfterLoad = configuration.instagram) {
     if (isLoadingDrive) return;
     setIsLoadingDrive(true);
     setLibraryNotice("");
@@ -413,6 +479,7 @@ export default function Home() {
         [...driveItems, ...current.filter((item) => item.source === "local")].sort(compareFileNames),
       );
       await Promise.all([markPublished(driveItems), loadPreferences(driveItems)]);
+      if (syncAfterLoad) await syncInstagram(driveItems);
       setLibraryNotice(
         `${driveItems.length} ${driveItems.length === 1 ? "bestand" : "bestanden"} uit Google Drive geladen.`,
       );
@@ -684,12 +751,36 @@ export default function Home() {
                   Vernieuw Drive
                 </Button>
               ) : null}
+              {configuration.instagram ? (
+                <Button
+                  variant="outline"
+                  className="rounded-full border-[#b9d2d5] bg-white text-[#123b45]"
+                  disabled={isSyncingInstagram}
+                  onClick={() => void syncInstagram()}
+                >
+                  {isSyncingInstagram ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}
+                  Controleer Instagram
+                </Button>
+              ) : null}
             </div>
           </div>
 
           {libraryNotice ? (
             <p className="mb-4 rounded-2xl border border-[#cfe1e0] bg-[#edf6f4] px-4 py-3 text-sm text-[#365d64]" role="status">
               {libraryNotice}
+            </p>
+          ) : null}
+
+          {instagramSyncNotice ? (
+            <p
+              className={`mb-4 rounded-2xl border px-4 py-3 text-sm ${
+                instagramSyncNotice.includes("mislukt")
+                  ? "border-red-200 bg-red-50 text-red-700"
+                  : "border-[#cfe1e0] bg-[#edf6f4] text-[#365d64]"
+              }`}
+              role="status"
+            >
+              {instagramSyncNotice}
             </p>
           ) : null}
 
@@ -784,6 +875,17 @@ export default function Home() {
                       <button
                         type="button"
                         className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
+                          libraryFilter === "removed"
+                            ? "bg-white text-amber-700 shadow-sm"
+                            : "text-[#638087] hover:text-[#234e57]"
+                        }`}
+                        onClick={() => setLibraryFilter("removed")}
+                      >
+                        Verwijderd · {removedCount}
+                      </button>
+                      <button
+                        type="button"
+                        className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
                           libraryFilter === "favorite"
                             ? "bg-white text-[#9b4d55] shadow-sm"
                             : "text-[#638087] hover:text-[#234e57]"
@@ -864,6 +966,8 @@ export default function Home() {
                       <p className="mt-4 font-serif text-xl text-[#123943]">
                         {libraryFilter === "published"
                           ? "Er zijn geen geplaatste bestanden in deze selectie"
+                          : libraryFilter === "removed"
+                            ? "Er zijn geen verwijderde Instagram-posts in deze selectie"
                           : libraryFilter === "favorite"
                             ? "Er zijn geen favorieten in deze selectie"
                             : libraryFilter === "forgotten"
@@ -970,6 +1074,12 @@ export default function Home() {
                       {item.status === "error" ? (
                         <span className={`absolute right-3 rounded-full bg-red-50 px-2.5 py-1 text-[10px] font-semibold text-red-700 shadow-sm ${item.kind === "video" ? "top-12" : "top-3"}`}>
                           Mislukt
+                        </span>
+                      ) : null}
+                      {item.status === "removed" ? (
+                        <span className={`absolute right-3 flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-1 text-[10px] font-semibold text-amber-800 shadow-sm ${item.kind === "video" ? "top-12" : "top-3"}`}>
+                          <Unlink className="size-3" />
+                          Verwijderd op Instagram
                         </span>
                       ) : null}
                       {item.status === "publishing" ? (

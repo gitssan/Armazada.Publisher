@@ -169,4 +169,47 @@ export async function publishToInstagram(
   return { mediaId };
 }
 
+export async function listInstagramMediaIds(env: PublishingEnv) {
+  const accountId = requireValue(env.INSTAGRAM_ACCOUNT_ID, "Instagram account-ID");
+  const accessToken = requireValue(env.INSTAGRAM_ACCESS_TOKEN, "Instagram access-token");
+  const version = env.META_GRAPH_VERSION || "v25.0";
+  const baseUrl = `https://graph.instagram.com/${version}`;
+  const firstPage = new URL(`${baseUrl}/${encodeURIComponent(accountId)}/media`);
+  firstPage.searchParams.set("fields", "id");
+  firstPage.searchParams.set("limit", "100");
+  firstPage.searchParams.set("access_token", accessToken);
+
+  const ids = new Set<string>();
+  let nextUrl: string | null = firstPage.toString();
+  let pageCount = 0;
+
+  while (nextUrl) {
+    pageCount += 1;
+    if (pageCount > 100) {
+      throw new Error("Instagram heeft meer dan 10.000 posts; de controle is daarom gestopt.");
+    }
+
+    const response = await fetch(nextUrl, { headers: { Accept: "application/json" } });
+    const payload = await parseJson(response);
+    const data = Array.isArray(payload.data) ? payload.data : [];
+    for (const entry of data) {
+      const id = (entry as JsonRecord).id;
+      if (typeof id === "string" && id) ids.add(id);
+    }
+
+    const next = (payload.paging as JsonRecord | undefined)?.next;
+    if (typeof next !== "string" || !next) {
+      nextUrl = null;
+      continue;
+    }
+    const parsedNext = new URL(next);
+    if (parsedNext.origin !== "https://graph.instagram.com") {
+      throw new Error("Instagram gaf een ongeldige vervolgpagina terug.");
+    }
+    nextUrl = parsedNext.toString();
+  }
+
+  return ids;
+}
+
 export type { PublishingEnv };
