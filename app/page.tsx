@@ -356,9 +356,11 @@ export default function Home() {
       }).format(checkedAt);
       const activeCount = active.size;
       const removedTotal = removed.size;
+      const removedInLibrary = candidates.filter((item) => removed.has(item.fingerprint)).length;
+      const removedFromHistory = Math.max(0, removedTotal - removedInLibrary);
       const otherCount = result.otherInstagramPosts || 0;
       setInstagramSyncNotice(
-        `Instagram gecontroleerd om ${time} · ${activeCount} app-${activeCount === 1 ? "post" : "posts"} aanwezig · ${removedTotal} verwijderd · ${otherCount} overige Instagram-${otherCount === 1 ? "post" : "posts"}.`,
+        `Instagram gecontroleerd om ${time} · ${activeCount} app-${activeCount === 1 ? "post" : "posts"} aanwezig · ${removedInLibrary} verwijderd en opnieuw beschikbaar${removedFromHistory ? ` · ${removedFromHistory} oudere verwijderde ${removedFromHistory === 1 ? "plaatsing" : "plaatsingen"}` : ""} · ${otherCount} overige Instagram-${otherCount === 1 ? "post" : "posts"}.`,
       );
     } catch (error) {
       setInstagramSyncNotice(
