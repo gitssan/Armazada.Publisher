@@ -26,6 +26,16 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 const COLLABORATOR_CREDITS = "@m1ndcycle · @christinedenouden";
 const DEFAULT_CAPTION = `Casa Armazada · Our home overlooking the Atlantic · Algarve, Portugal
@@ -34,6 +44,14 @@ A vision held for five years and brought to life through purposeful action, trus
 
 ${COLLABORATOR_CREDITS}`;
 const DEFAULT_COLLABORATORS = ["m1ndcycle", "christinedenouden"];
+const COLLABORATOR_COOLDOWN_MS = 8000;
+
+type CollaborationStatus =
+  | "unknown"
+  | "not_requested"
+  | "confirmed"
+  | "partial"
+  | "unverified";
 
 type LibraryItem = {
   id: string;
@@ -50,6 +68,7 @@ type LibraryItem = {
   dateKind: "taken" | "file";
   favorite: boolean;
   forgotten: boolean;
+  collaborationStatus: CollaborationStatus;
   selected: boolean;
   status: "idle" | "publishing" | "published" | "removed" | "error";
 };
@@ -79,6 +98,10 @@ type Configuration = {
 
 type PublishResult = {
   error?: string;
+  warning?: string;
+  collaboration?: {
+    status?: CollaborationStatus;
+  };
 };
 
 type InstagramSyncResult = {
@@ -155,6 +178,7 @@ async function makeItem(file: File): Promise<LibraryItem | null> {
     dateKind: "file",
     favorite: false,
     forgotten: false,
+    collaborationStatus: "not_requested",
     selected: true,
     status: "idle",
   };
@@ -213,6 +237,7 @@ export default function Home() {
   const [isLoadingDrive, setIsLoadingDrive] = useState(false);
   const [isSyncingInstagram, setIsSyncingInstagram] = useState(false);
   const [instagramSyncNotice, setInstagramSyncNotice] = useState("");
+  const [itemToRemove, setItemToRemove] = useState<LibraryItem | null>(null);
   const [libraryFilter, setLibraryFilter] = useState<LibraryFilter>("unpublished");
   const [mediaKindFilter, setMediaKindFilter] = useState<MediaKindFilter>("all");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
@@ -305,18 +330,29 @@ export default function Home() {
         body: JSON.stringify({ fingerprints: candidates.map((item) => item.fingerprint) }),
       });
       if (!response.ok) return;
-      const result = (await response.json()) as { published?: string[]; removed?: string[] };
+      const result = (await response.json()) as {
+        published?: string[];
+        removed?: string[];
+        collaborations?: Array<{ fingerprint: string; status: CollaborationStatus }>;
+      };
       const published = new Set(result.published || []);
       const removed = new Set(result.removed || []);
+      const collaborations = new Map(
+        (result.collaborations || []).map((collaboration) => [
+          collaboration.fingerprint,
+          collaboration.status,
+        ]),
+      );
       setItems((current) =>
         current.map((item) => {
+          const collaborationStatus = collaborations.get(item.fingerprint) ?? item.collaborationStatus;
           if (published.has(item.fingerprint)) {
-            return { ...item, status: "published", selected: false };
+            return { ...item, status: "published", selected: false, collaborationStatus };
           }
           if (removed.has(item.fingerprint)) {
-            return { ...item, status: "removed", selected: false };
+            return { ...item, status: "removed", selected: false, collaborationStatus };
           }
-          return item;
+          return { ...item, collaborationStatus };
         }),
       );
     } catch {
@@ -472,6 +508,7 @@ export default function Home() {
           dateKind: item.dateKind,
           favorite: current?.favorite ?? false,
           forgotten: current?.forgotten ?? false,
+          collaborationStatus: current?.collaborationStatus ?? "unknown",
           selected:
             current?.selected ?? (current?.status !== "published" && !current?.forgotten),
           status: current?.status ?? "idle",
@@ -522,6 +559,18 @@ export default function Home() {
     });
   }
 
+  function queueForRepublish(item: LibraryItem) {
+    setItems((current) =>
+      current.map((currentItem) =>
+        currentItem.id === item.id
+          ? { ...currentItem, status: "idle", selected: true }
+          : currentItem,
+      ),
+    );
+    setLibraryFilter("unpublished");
+    setLibraryNotice(`${item.name} staat klaar om nogmaals te publiceren.`);
+  }
+
   async function publishSelected() {
     if (!selected.length || isPublishing || !configuration.ready) return;
     setIsPublishing(true);
@@ -529,6 +578,7 @@ export default function Home() {
     setProgressDetail(`1 van ${selected.length} · upload voorbereiden…`);
     setNotice("");
     let publishedCount = 0;
+    const publicationWarnings: string[] = [];
 
     for (const [index, item] of selected.entries()) {
       setItems((current) =>
@@ -544,16 +594,17 @@ export default function Home() {
       }
 
       try {
+        let result: PublishResult;
         if (item.source === "drive" && item.driveFileId) {
           form.set("driveFileId", item.driveFileId);
           setProgressDetail(
             `${index + 1} van ${selected.length} · ${item.name} · ophalen uit Google Drive…`,
           );
           setProgress(Math.round(((index + 0.1) / selected.length) * 100));
-          await publishDriveItem(form);
+          result = await publishDriveItem(form);
         } else if (item.file) {
           form.set("media", item.file, item.name);
-          await uploadForPublishing(
+          result = await uploadForPublishing(
             form,
             (uploadPercent) => {
               const overallPercent = Math.round(
@@ -573,14 +624,28 @@ export default function Home() {
         } else {
           throw new Error("De bron van dit bestand is niet meer beschikbaar.");
         }
+        if (result.warning) publicationWarnings.push(`${item.name}: ${result.warning}`);
         publishedCount += 1;
         setItems((current) =>
           current.map((currentItem) =>
             currentItem.id === item.id
-              ? { ...currentItem, status: "published", selected: false }
+              ? {
+                  ...currentItem,
+                  status: "published",
+                  selected: false,
+                  collaborationStatus:
+                    result.collaboration?.status ?? currentItem.collaborationStatus,
+                }
               : currentItem,
           ),
         );
+
+        if (inviteCollaborator && index < selected.length - 1) {
+          setProgressDetail(
+            `${index + 1} van ${selected.length} · geplaatst · Instagram krijgt 8 seconden rust…`,
+          );
+          await new Promise((resolve) => setTimeout(resolve, COLLABORATOR_COOLDOWN_MS));
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : "Publiceren is mislukt.";
         setNotice(`${item.name}: ${message}`);
@@ -593,7 +658,11 @@ export default function Home() {
       setProgress(Math.round(((index + 1) / selected.length) * 100));
     }
 
-    if (publishedCount === selected.length) {
+    if (publicationWarnings.length) {
+      setNotice(
+        `${publishedCount} ${publishedCount === 1 ? "post is" : "posts zijn"} gepubliceerd. ${publicationWarnings.length} ${publicationWarnings.length === 1 ? "collaborator-uitnodiging moet" : "sets collaborator-uitnodigingen moeten"} handmatig worden gecontroleerd.`,
+      );
+    } else if (publishedCount === selected.length) {
       setNotice(`${publishedCount} ${publishedCount === 1 ? "post is" : "posts zijn"} gepubliceerd.`);
       setProgressDetail(`Klaar · ${publishedCount} van ${selected.length} gepubliceerd`);
     } else {
@@ -1090,17 +1159,36 @@ export default function Home() {
                         </span>
                       ) : null}
                       {item.status === "published" ? (
-                        <span className="absolute inset-0 grid place-items-center bg-[#0a5b52]/55 text-white backdrop-blur-[2px]">
+                        <span className="absolute inset-0 z-10 grid place-items-center bg-[#0a5b52]/55 text-white backdrop-blur-[2px]">
+                          <span className="flex flex-col items-center gap-2">
                           <span className="flex items-center gap-2 rounded-full bg-white px-4 py-2 text-xs font-semibold text-[#0a5b52]">
                             <Check className="size-4" strokeWidth={3} />
                             Geplaatst
                           </span>
+                          {item.collaborationStatus === "partial" || item.collaborationStatus === "unverified" || item.collaborationStatus === "unknown" ? (
+                            <span className="rounded-full bg-amber-50 px-3 py-1 text-[10px] font-semibold text-amber-800">
+                              Collab controleren
+                            </span>
+                          ) : item.collaborationStatus === "confirmed" ? (
+                            <span className="rounded-full bg-emerald-50 px-3 py-1 text-[10px] font-semibold text-emerald-800">
+                              Collab bevestigd
+                            </span>
+                          ) : null}
+                          <button
+                            type="button"
+                            className="rounded-full border border-white/60 bg-[#123943]/80 px-3 py-1.5 text-[11px] font-semibold text-white transition hover:bg-[#123943]"
+                            onClick={() => queueForRepublish(item)}
+                          >
+                            Nogmaals publiceren
+                          </button>
+                          </span>
                         </span>
                       ) : null}
                       <button
-                        className="absolute right-2 bottom-2 hidden size-8 place-items-center rounded-full bg-white/90 text-[#123943] shadow-sm group-hover:grid"
-                        aria-label={`Verwijder ${item.name}`}
-                        onClick={() => removeItem(item.id)}
+                        className="absolute right-2 bottom-2 z-20 hidden size-8 place-items-center rounded-full bg-white/90 text-[#123943] shadow-sm group-hover:grid"
+                        aria-label={`Verwijder ${item.name} uit het overzicht`}
+                        title="Uit overzicht verwijderen"
+                        onClick={() => setItemToRemove(item)}
                       >
                         <Trash2 className="size-3.5" />
                       </button>
@@ -1247,6 +1335,39 @@ export default function Home() {
           </div>
         </aside>
       </div>
+
+      <AlertDialog
+        open={Boolean(itemToRemove)}
+        onOpenChange={(open) => {
+          if (!open) setItemToRemove(null);
+        }}
+      >
+        <AlertDialogContent className="rounded-3xl border-[#d7e3e3]">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="font-serif text-2xl text-[#123943]">
+              Uit het overzicht verwijderen?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="leading-6 text-[#58717a]">
+              {itemToRemove?.source === "drive"
+                ? `${itemToRemove.name} verdwijnt alleen tijdelijk uit deze weergave. Het bestand blijft in Google Drive en verschijnt weer wanneer je Drive vernieuwt. De Instagram-post wordt niet verwijderd.`
+                : `${itemToRemove?.name || "Dit bestand"} verdwijnt alleen uit deze weergave. Het bronbestand op je laptop en de eventuele Instagram-post worden niet verwijderd.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="rounded-full">Annuleren</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              className="rounded-full"
+              onClick={() => {
+                if (itemToRemove) removeItem(itemToRemove.id);
+                setItemToRemove(null);
+              }}
+            >
+              Uit overzicht verwijderen
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </main>
   );
 }

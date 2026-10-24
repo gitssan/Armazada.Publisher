@@ -11,6 +11,10 @@ export const publishedMedia = sqliteTable("published_media", {
   instagramStatus: text("instagram_status").notNull().default("active"),
   instagramCheckedAt: integer("instagram_checked_at"),
   instagramRemovedAt: integer("instagram_removed_at"),
+  collaboratorsRequested: text("collaborators_requested").notNull().default("[]"),
+  collaboratorStatus: text("collaborator_status").notNull().default("unknown"),
+  collaboratorDetails: text("collaborator_details"),
+  collaboratorCheckedAt: integer("collaborator_checked_at"),
 });
 
 export const mediaPreferences = sqliteTable("media_preferences", {

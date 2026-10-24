@@ -84,6 +84,10 @@ export async function POST(request: Request) {
         lastModified: media.lastModified,
         mediaType: temporaryAsset.resourceType,
         instagramMediaId: result.mediaId,
+        collaboratorsRequested: result.collaboration.requested,
+        collaboratorStatus: result.collaboration.status,
+        collaboratorDetails: result.collaboration.details,
+        collaboratorCheckedAt: result.collaboration.checkedAt,
       });
     } catch (error) {
       historySaved = false;
@@ -97,9 +101,12 @@ export async function POST(request: Request) {
       ok: true,
       mediaId: result.mediaId,
       historySaved,
-      warning: historySaved
-        ? undefined
-        : "De post staat op Instagram, maar kon niet in de lokale historie worden opgeslagen.",
+      collaboration: result.collaboration,
+      warning:
+        result.collaboration.warning ||
+        (historySaved
+          ? undefined
+          : "De post staat op Instagram, maar kon niet in de lokale historie worden opgeslagen."),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Publiceren is mislukt.";

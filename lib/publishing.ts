@@ -15,6 +15,14 @@ type UploadedAsset = {
 
 type JsonRecord = Record<string, unknown>;
 
+type CollaboratorVerification = {
+  requested: string[];
+  status: "not_requested" | "confirmed" | "partial" | "unverified";
+  details: Array<{ username: string; inviteStatus?: string }>;
+  checkedAt: number | null;
+  warning?: string;
+};
+
 function requireValue(value: string | undefined, name: string) {
   if (!value) throw new Error(`${name} ontbreekt in de app-instellingen.`);
   return value;
@@ -166,7 +174,71 @@ export async function publishToInstagram(
   const published = await parseJson(publishResponse);
   const mediaId = published.id as string | undefined;
   if (!mediaId) throw new Error("Instagram bevestigde de publicatie niet.");
-  return { mediaId };
+  const collaboration = await verifyInstagramCollaborators(mediaId, collaborators, env);
+  return { mediaId, collaboration };
+}
+
+async function verifyInstagramCollaborators(
+  mediaId: string,
+  requested: string[],
+  env: PublishingEnv,
+): Promise<CollaboratorVerification> {
+  if (!requested.length) {
+    return { requested: [], status: "not_requested", details: [], checkedAt: null };
+  }
+
+  const accessToken = requireValue(env.INSTAGRAM_ACCESS_TOKEN, "Instagram access-token");
+  const version = env.META_GRAPH_VERSION || "v25.0";
+  const url = new URL(
+    `https://graph.instagram.com/${version}/${encodeURIComponent(mediaId)}/collaborators`,
+  );
+  url.searchParams.set("fields", "username,invite_status");
+  url.searchParams.set("access_token", accessToken);
+
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  const checkedAt = Date.now();
+  try {
+    const response = await fetch(url.toString(), { headers: { Accept: "application/json" } });
+    if (!response.ok) {
+      return {
+        requested,
+        status: "unverified",
+        details: [],
+        checkedAt,
+        warning: "De post is geplaatst, maar Instagram liet de collaborator-uitnodigingen niet automatisch controleren.",
+      };
+    }
+    const payload = (await response.json().catch(() => ({}))) as JsonRecord;
+    const data = Array.isArray(payload.data) ? payload.data : [];
+    const details = data.flatMap((entry) => {
+      const record = entry as JsonRecord;
+      const username = typeof record.username === "string" ? record.username : "";
+      if (!username) return [];
+      return [{
+        username,
+        inviteStatus: typeof record.invite_status === "string" ? record.invite_status : undefined,
+      }];
+    });
+    const confirmed = new Set(details.map((detail) => detail.username.toLowerCase()));
+    const missing = requested.filter((username) => !confirmed.has(username.toLowerCase()));
+    return {
+      requested,
+      status: missing.length ? "partial" : "confirmed",
+      details,
+      checkedAt,
+      warning: missing.length
+        ? `Instagram bevestigde de collaborator-uitnodiging niet voor @${missing.join(", @")}. Controleer deze post handmatig.`
+        : undefined,
+    };
+  } catch {
+    return {
+      requested,
+      status: "unverified",
+      details: [],
+      checkedAt,
+      warning: "De post is geplaatst, maar de collaborator-uitnodigingen konden niet worden gecontroleerd.",
+    };
+  }
 }
 
 export async function listInstagramMediaIds(env: PublishingEnv) {
