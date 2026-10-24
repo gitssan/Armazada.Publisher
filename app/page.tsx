@@ -8,6 +8,7 @@ import {
   Cloud,
   Film,
   FolderOpen,
+  Heart,
   Image as ImageIcon,
   LoaderCircle,
   MoreHorizontal,
@@ -15,6 +16,7 @@ import {
   RefreshCw,
   Send,
   SlidersHorizontal,
+  EyeOff,
   Trash2,
   UploadCloud,
 } from "lucide-react";
@@ -45,6 +47,8 @@ type LibraryItem = {
   lastModified: number;
   displayDate: number;
   dateKind: "taken" | "file";
+  favorite: boolean;
+  forgotten: boolean;
   selected: boolean;
   status: "idle" | "publishing" | "published" | "error";
 };
@@ -61,7 +65,8 @@ type DriveMediaItem = {
   dateKind: "taken" | "file";
 };
 
-type LibraryFilter = "unpublished" | "published";
+type LibraryFilter = "unpublished" | "published" | "favorite" | "forgotten";
+type MediaKindFilter = "all" | "image" | "video";
 type SortDirection = "asc" | "desc";
 
 type Configuration = {
@@ -138,6 +143,8 @@ async function makeItem(file: File): Promise<LibraryItem | null> {
     lastModified: file.lastModified,
     displayDate: file.lastModified,
     dateKind: "file",
+    favorite: false,
+    forgotten: false,
     selected: true,
     status: "idle",
   };
@@ -195,6 +202,7 @@ export default function Home() {
   const [libraryNotice, setLibraryNotice] = useState("");
   const [isLoadingDrive, setIsLoadingDrive] = useState(false);
   const [libraryFilter, setLibraryFilter] = useState<LibraryFilter>("unpublished");
+  const [mediaKindFilter, setMediaKindFilter] = useState<MediaKindFilter>("all");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const folderInput = useRef<HTMLInputElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -232,27 +240,44 @@ export default function Home() {
     [items, sortDirection],
   );
   const selected = useMemo(
-    () => sortedItems.filter((item) => item.selected),
+    () =>
+      sortedItems.filter(
+        (item) => item.selected && item.status !== "published" && !item.forgotten,
+      ),
     [sortedItems],
   );
   const visibleItems = useMemo(
     () =>
-      sortedItems.filter((item) =>
-        libraryFilter === "published" ? item.status === "published" : item.status !== "published",
-      ),
-    [sortedItems, libraryFilter],
+      sortedItems.filter((item) => {
+        const matchesLibraryFilter =
+          libraryFilter === "published"
+            ? item.status === "published" && !item.forgotten
+            : libraryFilter === "favorite"
+              ? item.favorite && !item.forgotten
+              : libraryFilter === "forgotten"
+                ? item.forgotten
+                : item.status !== "published" && !item.forgotten;
+        const matchesKind = mediaKindFilter === "all" || item.kind === mediaKindFilter;
+        return matchesLibraryFilter && matchesKind;
+      }),
+    [sortedItems, libraryFilter, mediaKindFilter],
   );
-  const visibleSelected = useMemo(
-    () => visibleItems.filter((item) => item.selected),
+  const selectableVisibleItems = useMemo(
+    () => visibleItems.filter((item) => item.status !== "published" && !item.forgotten),
     [visibleItems],
   );
+  const visibleSelected = selectableVisibleItems.filter((item) => item.selected);
   const unpublishedCount = useMemo(
-    () => items.filter((item) => item.status !== "published").length,
+    () => items.filter((item) => item.status !== "published" && !item.forgotten).length,
     [items],
   );
-  const publishedCount = items.length - unpublishedCount;
+  const publishedCount = items.filter(
+    (item) => item.status === "published" && !item.forgotten,
+  ).length;
+  const favoriteCount = items.filter((item) => item.favorite && !item.forgotten).length;
+  const forgottenCount = items.filter((item) => item.forgotten).length;
   const allSelected =
-    visibleItems.length > 0 && visibleItems.every((item) => item.selected);
+    selectableVisibleItems.length > 0 && selectableVisibleItems.every((item) => item.selected);
 
   async function markPublished(candidates: LibraryItem[]) {
     if (!candidates.length) return;
@@ -275,6 +300,78 @@ export default function Home() {
       );
     } catch {
       // De mediabibliotheek blijft bruikbaar wanneer de historie tijdelijk niet beschikbaar is.
+    }
+  }
+
+  async function loadPreferences(candidates: LibraryItem[]) {
+    if (!candidates.length) return;
+    try {
+      const response = await fetch("/api/preferences", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fingerprints: candidates.map((item) => item.fingerprint) }),
+      });
+      if (!response.ok) return;
+      const result = (await response.json()) as {
+        preferences?: Array<{ fingerprint: string; favorite: boolean; forgotten: boolean }>;
+      };
+      const preferences = new Map(
+        (result.preferences || []).map((preference) => [preference.fingerprint, preference]),
+      );
+      if (!preferences.size) return;
+      setItems((current) =>
+        current.map((item) => {
+          const preference = preferences.get(item.fingerprint);
+          return preference
+            ? {
+                ...item,
+                favorite: preference.favorite,
+                forgotten: preference.forgotten,
+                selected: preference.forgotten ? false : item.selected,
+              }
+            : item;
+        }),
+      );
+    } catch {
+      // De mediabibliotheek blijft bruikbaar wanneer voorkeuren tijdelijk niet beschikbaar zijn.
+    }
+  }
+
+  async function updatePreference(
+    item: LibraryItem,
+    preference: { favorite: boolean; forgotten: boolean },
+  ) {
+    const previous = { favorite: item.favorite, forgotten: item.forgotten, selected: item.selected };
+    setItems((current) =>
+      current.map((currentItem) =>
+        currentItem.id === item.id
+          ? {
+              ...currentItem,
+              ...preference,
+              selected: preference.forgotten ? false : currentItem.selected,
+            }
+          : currentItem,
+      ),
+    );
+    try {
+      const response = await fetch("/api/preferences", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fingerprint: item.fingerprint, ...preference }),
+      });
+      if (!response.ok) {
+        const result = (await response.json().catch(() => ({}))) as { error?: string };
+        throw new Error(result.error || "Voorkeur opslaan is mislukt.");
+      }
+    } catch (error) {
+      setItems((current) =>
+        current.map((currentItem) =>
+          currentItem.id === item.id ? { ...currentItem, ...previous } : currentItem,
+        ),
+      );
+      setLibraryNotice(
+        error instanceof Error ? error.message : "Voorkeur opslaan is mislukt.",
+      );
     }
   }
 
@@ -305,14 +402,17 @@ export default function Home() {
           lastModified: item.lastModified,
           displayDate: item.displayDate,
           dateKind: item.dateKind,
-          selected: current?.selected ?? current?.status !== "published",
+          favorite: current?.favorite ?? false,
+          forgotten: current?.forgotten ?? false,
+          selected:
+            current?.selected ?? (current?.status !== "published" && !current?.forgotten),
           status: current?.status ?? "idle",
         };
       });
       setItems((current) =>
         [...driveItems, ...current.filter((item) => item.source === "local")].sort(compareFileNames),
       );
-      await markPublished(driveItems);
+      await Promise.all([markPublished(driveItems), loadPreferences(driveItems)]);
       setLibraryNotice(
         `${driveItems.length} ${driveItems.length === 1 ? "bestand" : "bestanden"} uit Google Drive geladen.`,
       );
@@ -342,7 +442,7 @@ export default function Home() {
       return [...current, ...additions].sort(compareFileNames);
     });
 
-    await markPublished(accepted);
+    await Promise.all([markPublished(accepted), loadPreferences(accepted)]);
   }
 
   function removeItem(id: string) {
@@ -658,7 +758,7 @@ export default function Home() {
               <>
                 <div className="border-b border-[#e0eaea] px-5 py-4">
                   <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div className="flex rounded-full border border-[#c9dddd] bg-[#edf5f4] p-1" aria-label="Filter mediabibliotheek">
+                    <div className="flex flex-wrap rounded-2xl border border-[#c9dddd] bg-[#edf5f4] p-1" aria-label="Filter mediabibliotheek">
                       <button
                         type="button"
                         className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
@@ -681,6 +781,28 @@ export default function Home() {
                       >
                         Geplaatst · {publishedCount}
                       </button>
+                      <button
+                        type="button"
+                        className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
+                          libraryFilter === "favorite"
+                            ? "bg-white text-[#9b4d55] shadow-sm"
+                            : "text-[#638087] hover:text-[#234e57]"
+                        }`}
+                        onClick={() => setLibraryFilter("favorite")}
+                      >
+                        Favoriet · {favoriteCount}
+                      </button>
+                      <button
+                        type="button"
+                        className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
+                          libraryFilter === "forgotten"
+                            ? "bg-white text-[#53676c] shadow-sm"
+                            : "text-[#638087] hover:text-[#234e57]"
+                        }`}
+                        onClick={() => setLibraryFilter("forgotten")}
+                      >
+                        Vergeten · {forgottenCount}
+                      </button>
                     </div>
                     <button
                       type="button"
@@ -692,24 +814,46 @@ export default function Home() {
                       Datum {sortDirection === "asc" ? "oud–nieuw" : "nieuw–oud"}
                     </button>
                   </div>
-                  {libraryFilter === "unpublished" && visibleItems.length > 0 ? (
-                    <label className="mt-3 flex cursor-pointer items-center gap-3 text-sm font-medium text-[#163d46]">
-                      <Checkbox
-                        checked={allSelected}
-                        onCheckedChange={(checked) => {
-                          const visibleIds = new Set(visibleItems.map((item) => item.id));
-                          setItems((current) =>
-                            current.map((item) =>
-                              visibleIds.has(item.id)
-                                ? { ...item, selected: checked === true }
-                                : item,
-                            ),
-                          );
-                        }}
-                      />
-                      {visibleSelected.length} van {visibleItems.length} geselecteerd
-                    </label>
-                  ) : null}
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex rounded-full border border-[#d2e1e1] bg-white p-1" aria-label="Filter op mediatype">
+                      {([
+                        ["all", "Alles"],
+                        ["image", "Foto’s"],
+                        ["video", "Video’s"],
+                      ] as const).map(([value, label]) => (
+                        <button
+                          key={value}
+                          type="button"
+                          className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
+                            mediaKindFilter === value
+                              ? "bg-[#dceceb] text-[#174e57]"
+                              : "text-[#6b858a] hover:text-[#234e57]"
+                          }`}
+                          onClick={() => setMediaKindFilter(value)}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                    {selectableVisibleItems.length > 0 ? (
+                      <label className="flex cursor-pointer items-center gap-3 text-sm font-medium text-[#163d46]">
+                        <Checkbox
+                          checked={allSelected}
+                          onCheckedChange={(checked) => {
+                            const visibleIds = new Set(selectableVisibleItems.map((item) => item.id));
+                            setItems((current) =>
+                              current.map((item) =>
+                                visibleIds.has(item.id)
+                                  ? { ...item, selected: checked === true }
+                                  : item,
+                              ),
+                            );
+                          }}
+                        />
+                        {visibleSelected.length} van {selectableVisibleItems.length} geselecteerd
+                      </label>
+                    ) : null}
+                  </div>
                 </div>
                 {visibleItems.length === 0 ? (
                   <div className="grid min-h-72 place-items-center px-6 py-12 text-center">
@@ -719,8 +863,12 @@ export default function Home() {
                       </div>
                       <p className="mt-4 font-serif text-xl text-[#123943]">
                         {libraryFilter === "published"
-                          ? "Er zijn nog geen bestanden geplaatst"
-                          : "Alles uit deze map is geplaatst"}
+                          ? "Er zijn geen geplaatste bestanden in deze selectie"
+                          : libraryFilter === "favorite"
+                            ? "Er zijn geen favorieten in deze selectie"
+                            : libraryFilter === "forgotten"
+                              ? "Er zijn geen vergeten bestanden in deze selectie"
+                              : "Alles uit deze selectie is geplaatst of vergeten"}
                       </p>
                     </div>
                   </div>
@@ -730,7 +878,11 @@ export default function Home() {
                     <article
                       key={item.id}
                       className={`group relative aspect-[4/5] overflow-hidden rounded-2xl border-2 bg-[#d9e8e7] transition ${
-                        item.selected ? "border-[#2d7e83]" : "border-transparent opacity-65"
+                        item.forgotten
+                          ? "border-[#87999c] opacity-65"
+                          : item.selected
+                            ? "border-[#2d7e83]"
+                            : "border-transparent opacity-65"
                       }`}
                     >
                       {item.kind === "image" ? (
@@ -753,7 +905,7 @@ export default function Home() {
                       </div>
                       <button
                         className="absolute left-3 top-3 grid size-8 place-items-center rounded-full border border-white/60 bg-white/90 shadow-sm"
-                        disabled={item.status === "published"}
+                        disabled={item.status === "published" || item.forgotten}
                         aria-label={`${item.selected ? "Deselecteer" : "Selecteer"} ${item.name}`}
                         onClick={() =>
                           setItems((current) =>
@@ -766,6 +918,44 @@ export default function Home() {
                         }
                       >
                         {item.selected ? <Check className="size-4 text-[#0b5362]" strokeWidth={3} /> : null}
+                      </button>
+                      <button
+                        type="button"
+                        className={`absolute left-3 top-12 grid size-8 place-items-center rounded-full border shadow-sm transition ${
+                          item.favorite
+                            ? "border-rose-200 bg-rose-50 text-rose-600"
+                            : "border-white/60 bg-white/90 text-[#53737a] hover:text-rose-600"
+                        }`}
+                        aria-label={`${item.favorite ? "Verwijder uit favorieten" : "Maak favoriet"}: ${item.name}`}
+                        title={item.favorite ? "Niet meer favoriet" : "Favoriet"}
+                        disabled={item.status === "publishing"}
+                        onClick={() =>
+                          void updatePreference(item, {
+                            favorite: !item.favorite,
+                            forgotten: false,
+                          })
+                        }
+                      >
+                        <Heart className={`size-4 ${item.favorite ? "fill-current" : ""}`} />
+                      </button>
+                      <button
+                        type="button"
+                        className={`absolute left-3 top-[5.25rem] grid size-8 place-items-center rounded-full border shadow-sm transition ${
+                          item.forgotten
+                            ? "border-[#9eafb2] bg-[#e8eeee] text-[#344f55]"
+                            : "border-white/60 bg-white/90 text-[#53737a] hover:text-[#173f47]"
+                        }`}
+                        aria-label={`${item.forgotten ? "Herstel" : "Vergeet"}: ${item.name}`}
+                        title={item.forgotten ? "Terugzetten" : "Vergeten"}
+                        disabled={item.status === "publishing"}
+                        onClick={() =>
+                          void updatePreference(item, {
+                            favorite: false,
+                            forgotten: !item.forgotten,
+                          })
+                        }
+                      >
+                        <EyeOff className="size-4" />
                       </button>
                       {item.kind === "video" ? (
                         <span className="absolute right-3 top-3 grid size-8 place-items-center rounded-full bg-black/45 text-white backdrop-blur">

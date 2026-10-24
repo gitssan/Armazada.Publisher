@@ -9,3 +9,10 @@ export const publishedMedia = sqliteTable("published_media", {
   instagramMediaId: text("instagram_media_id").notNull(),
   publishedAt: integer("published_at").notNull(),
 });
+
+export const mediaPreferences = sqliteTable("media_preferences", {
+  fingerprint: text("fingerprint").primaryKey(),
+  favorite: integer("favorite", { mode: "boolean" }).notNull().default(false),
+  forgotten: integer("forgotten", { mode: "boolean" }).notNull().default(false),
+  updatedAt: integer("updated_at").notNull(),
+});
