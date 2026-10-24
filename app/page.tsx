@@ -27,7 +27,7 @@ import { Textarea } from "@/components/ui/textarea";
 const DEFAULT_CAPTION = `Casa Armazada · Our home overlooking the Atlantic · Algarve, Portugal
 
 A vision held for five years and brought to life through purposeful action, trust and inner alignment — a home and a way of life rooted in freedom and nature.`;
-const DEFAULT_COLLABORATOR = "m1ndcycle";
+const DEFAULT_COLLABORATORS = ["m1ndcycle", "christinedenouden"];
 
 type LibraryItem = {
   id: string;
@@ -40,6 +40,8 @@ type LibraryItem = {
   kind: "image" | "video";
   size: number;
   lastModified: number;
+  displayDate: number;
+  dateKind: "taken" | "file";
   selected: boolean;
   status: "idle" | "publishing" | "published" | "error";
 };
@@ -52,7 +54,11 @@ type DriveMediaItem = {
   kind: "image" | "video";
   size: number;
   lastModified: number;
+  displayDate: number;
+  dateKind: "taken" | "file";
 };
+
+type LibraryFilter = "unpublished" | "published";
 
 type Configuration = {
   instagram: boolean;
@@ -84,6 +90,19 @@ function formatSize(bytes: number) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
+function compareFileNames(left: LibraryItem, right: LibraryItem) {
+  return left.name.localeCompare(right.name, "nl", { numeric: true, sensitivity: "base" });
+}
+
+function formatMediaDate(timestamp: number) {
+  if (!timestamp) return "Datum onbekend";
+  return new Intl.DateTimeFormat("nl-NL", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  }).format(timestamp);
+}
+
 async function makeItem(file: File): Promise<LibraryItem | null> {
   const kind = file.type.startsWith("image/")
     ? "image"
@@ -105,6 +124,8 @@ async function makeItem(file: File): Promise<LibraryItem | null> {
     kind,
     size: file.size,
     lastModified: file.lastModified,
+    displayDate: file.lastModified,
+    dateKind: "file",
     selected: true,
     status: "idle",
   };
@@ -161,6 +182,7 @@ export default function Home() {
   const [notice, setNotice] = useState("");
   const [libraryNotice, setLibraryNotice] = useState("");
   const [isLoadingDrive, setIsLoadingDrive] = useState(false);
+  const [libraryFilter, setLibraryFilter] = useState<LibraryFilter>("unpublished");
   const folderInput = useRef<HTMLInputElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
 
@@ -186,7 +208,26 @@ export default function Home() {
   }, []);
 
   const selected = useMemo(() => items.filter((item) => item.selected), [items]);
-  const allSelected = items.length > 0 && selected.length === items.length;
+  const visibleItems = useMemo(
+    () =>
+      items
+        .filter((item) =>
+          libraryFilter === "published" ? item.status === "published" : item.status !== "published",
+        )
+        .sort(compareFileNames),
+    [items, libraryFilter],
+  );
+  const visibleSelected = useMemo(
+    () => visibleItems.filter((item) => item.selected),
+    [visibleItems],
+  );
+  const unpublishedCount = useMemo(
+    () => items.filter((item) => item.status !== "published").length,
+    [items],
+  );
+  const publishedCount = items.length - unpublishedCount;
+  const allSelected =
+    visibleItems.length > 0 && visibleItems.every((item) => item.selected);
 
   async function markPublished(candidates: LibraryItem[]) {
     if (!candidates.length) return;
@@ -237,14 +278,15 @@ export default function Home() {
           kind: item.kind,
           size: item.size,
           lastModified: item.lastModified,
+          displayDate: item.displayDate,
+          dateKind: item.dateKind,
           selected: current?.selected ?? current?.status !== "published",
           status: current?.status ?? "idle",
         };
       });
-      setItems((current) => [
-        ...driveItems,
-        ...current.filter((item) => item.source === "local"),
-      ]);
+      setItems((current) =>
+        [...driveItems, ...current.filter((item) => item.source === "local")].sort(compareFileNames),
+      );
       await markPublished(driveItems);
       setLibraryNotice(
         `${driveItems.length} ${driveItems.length === 1 ? "bestand" : "bestanden"} uit Google Drive geladen.`,
@@ -272,7 +314,7 @@ export default function Home() {
         known.add(item.id);
         return true;
       });
-      return [...current, ...additions];
+      return [...current, ...additions].sort(compareFileNames);
     });
 
     await markPublished(accepted);
@@ -303,7 +345,9 @@ export default function Home() {
       const form = new FormData();
       form.set("caption", caption);
       form.set("fingerprint", item.fingerprint);
-      if (inviteCollaborator) form.set("collaborator", DEFAULT_COLLABORATOR);
+      if (inviteCollaborator) {
+        DEFAULT_COLLABORATORS.forEach((collaborator) => form.append("collaborator", collaborator));
+      }
 
       try {
         if (item.source === "drive" && item.driveFileId) {
@@ -587,23 +631,72 @@ export default function Home() {
               </div>
             ) : (
               <>
-                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#e0eaea] px-5 py-4">
-                  <label className="flex cursor-pointer items-center gap-3 text-sm font-medium text-[#163d46]">
-                    <Checkbox
-                      checked={allSelected}
-                      onCheckedChange={(checked) =>
-                        setItems((current) => current.map((item) => ({ ...item, selected: checked === true })))
-                      }
-                    />
-                    {selected.length} van {items.length} geselecteerd
-                  </label>
-                  <div className="flex items-center gap-1 text-xs text-[#648087]">
-                    <SlidersHorizontal className="size-3.5" />
-                    Eén bestand = één post
+                <div className="border-b border-[#e0eaea] px-5 py-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex rounded-full border border-[#c9dddd] bg-[#edf5f4] p-1" aria-label="Filter mediabibliotheek">
+                      <button
+                        type="button"
+                        className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
+                          libraryFilter === "unpublished"
+                            ? "bg-white text-[#0b5362] shadow-sm"
+                            : "text-[#638087] hover:text-[#234e57]"
+                        }`}
+                        onClick={() => setLibraryFilter("unpublished")}
+                      >
+                        Nog te plaatsen · {unpublishedCount}
+                      </button>
+                      <button
+                        type="button"
+                        className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
+                          libraryFilter === "published"
+                            ? "bg-white text-[#0b5362] shadow-sm"
+                            : "text-[#638087] hover:text-[#234e57]"
+                        }`}
+                        onClick={() => setLibraryFilter("published")}
+                      >
+                        Geplaatst · {publishedCount}
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-1 text-xs text-[#648087]">
+                      <SlidersHorizontal className="size-3.5" />
+                      Bestandsnaam A–Z
+                    </div>
                   </div>
+                  {libraryFilter === "unpublished" && visibleItems.length > 0 ? (
+                    <label className="mt-3 flex cursor-pointer items-center gap-3 text-sm font-medium text-[#163d46]">
+                      <Checkbox
+                        checked={allSelected}
+                        onCheckedChange={(checked) => {
+                          const visibleIds = new Set(visibleItems.map((item) => item.id));
+                          setItems((current) =>
+                            current.map((item) =>
+                              visibleIds.has(item.id)
+                                ? { ...item, selected: checked === true }
+                                : item,
+                            ),
+                          );
+                        }}
+                      />
+                      {visibleSelected.length} van {visibleItems.length} geselecteerd
+                    </label>
+                  ) : null}
                 </div>
-                <div className="grid grid-cols-2 gap-3 p-3 sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
-                  {items.map((item, index) => (
+                {visibleItems.length === 0 ? (
+                  <div className="grid min-h-72 place-items-center px-6 py-12 text-center">
+                    <div>
+                      <div className="mx-auto grid size-12 place-items-center rounded-full bg-[#e1efed] text-[#32737a]">
+                        <Check className="size-5" />
+                      </div>
+                      <p className="mt-4 font-serif text-xl text-[#123943]">
+                        {libraryFilter === "published"
+                          ? "Er zijn nog geen bestanden geplaatst"
+                          : "Alles uit deze map is geplaatst"}
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-3 p-3 sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+                  {visibleItems.map((item, index) => (
                     <article
                       key={item.id}
                       className={`group relative aspect-[4/5] overflow-hidden rounded-2xl border-2 bg-[#d9e8e7] transition ${
@@ -622,11 +715,15 @@ export default function Home() {
                       <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/35 to-transparent px-3 pb-3 pt-10 text-white">
                         <p className="truncate text-xs font-medium">{item.name}</p>
                         <p className="mt-1 text-[11px] text-white/70">
+                          {item.dateKind === "taken" ? "Opgenomen" : "Bestandsdatum"} {formatMediaDate(item.displayDate)}
+                        </p>
+                        <p className="mt-0.5 text-[10px] text-white/60">
                           {String(index + 1).padStart(2, "0")} · {formatSize(item.size)} · {item.source === "drive" ? "Drive" : "Lokaal"}
                         </p>
                       </div>
                       <button
                         className="absolute left-3 top-3 grid size-8 place-items-center rounded-full border border-white/60 bg-white/90 shadow-sm"
+                        disabled={item.status === "published"}
                         aria-label={`${item.selected ? "Deselecteer" : "Selecteer"} ${item.name}`}
                         onClick={() =>
                           setItems((current) =>
@@ -677,7 +774,8 @@ export default function Home() {
                       </button>
                     </article>
                   ))}
-                </div>
+                  </div>
+                )}
               </>
             )}
           </div>
@@ -735,14 +833,14 @@ export default function Home() {
                   disabled={isPublishing}
                   onCheckedChange={(checked) => setInviteCollaborator(checked === true)}
                   className="mt-0.5 border-[#75a2a2] data-[state=checked]:border-[#176a72] data-[state=checked]:bg-[#176a72]"
-                  aria-label="Nodig m1ndcycle uit als collaborator"
+                  aria-label="Nodig m1ndcycle en christinedenouden uit als collaborators"
                 />
                 <span>
                   <span className="block text-sm font-semibold text-[#153d46]">
-                    @m1ndcycle als collaborator
+                    @m1ndcycle + @christinedenouden
                   </span>
                   <span className="mt-1 block text-xs leading-5 text-[#6a8389]">
-                    Na acceptatie verschijnt dezelfde post ook op je eigen profiel.
+                    Na acceptatie verschijnt dezelfde post ook op beide profielen.
                   </span>
                 </span>
               </label>

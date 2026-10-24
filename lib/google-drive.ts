@@ -9,10 +9,14 @@ type GoogleDriveFile = {
   name: string;
   mimeType: string;
   size?: string;
+  createdTime?: string;
   modifiedTime?: string;
   md5Checksum?: string;
   thumbnailLink?: string;
   parents?: string[];
+  imageMediaMetadata?: {
+    time?: string;
+  };
 };
 
 export type GoogleDriveMediaItem = {
@@ -22,6 +26,8 @@ export type GoogleDriveMediaItem = {
   kind: "image" | "video";
   size: number;
   lastModified: number;
+  displayDate: number;
+  dateKind: "taken" | "file";
   fingerprint: string;
   thumbnailUrl: string;
 };
@@ -124,9 +130,22 @@ function isSupportedMedia(file: GoogleDriveFile) {
   return file.mimeType.startsWith("image/") || file.mimeType.startsWith("video/");
 }
 
+function parseDriveDate(value?: string) {
+  if (!value) return 0;
+  const normalized = value.replace(
+    /^(\d{4}):(\d{2}):(\d{2})\s+(\d{2}:\d{2}:\d{2})$/,
+    "$1-$2-$3T$4",
+  );
+  const parsed = Date.parse(normalized);
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
 async function getGoogleDriveFile(fileId: string, env: GoogleDriveEnv) {
   const url = new URL(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}`);
-  url.searchParams.set("fields", "id,name,mimeType,size,modifiedTime,md5Checksum,thumbnailLink,parents");
+  url.searchParams.set(
+    "fields",
+    "id,name,mimeType,size,createdTime,modifiedTime,md5Checksum,thumbnailLink,parents,imageMediaMetadata(time)",
+  );
   url.searchParams.set("supportsAllDrives", "true");
   const response = await authorizedFetch(url.toString(), env);
   if (!response.ok) throw new Error(await readGoogleError(response));
@@ -158,8 +177,11 @@ export async function listGoogleDriveMedia(env: GoogleDriveEnv): Promise<GoogleD
   do {
     const url = new URL("https://www.googleapis.com/drive/v3/files");
     url.searchParams.set("q", `'${folderId.replace(/'/g, "\\'")}' in parents and trashed = false`);
-    url.searchParams.set("fields", "nextPageToken,files(id,name,mimeType,size,modifiedTime,md5Checksum,thumbnailLink)");
-    url.searchParams.set("orderBy", "modifiedTime desc");
+    url.searchParams.set(
+      "fields",
+      "nextPageToken,files(id,name,mimeType,size,createdTime,modifiedTime,md5Checksum,thumbnailLink,imageMediaMetadata(time))",
+    );
+    url.searchParams.set("orderBy", "name");
     url.searchParams.set("pageSize", "1000");
     url.searchParams.set("spaces", "drive");
     url.searchParams.set("supportsAllDrives", "true");
@@ -179,6 +201,8 @@ export async function listGoogleDriveMedia(env: GoogleDriveEnv): Promise<GoogleD
   return files.filter(isSupportedMedia).map((file) => {
     const size = Number(file.size || 0);
     const checksum = file.md5Checksum || `${file.id}:${file.modifiedTime || ""}:${size}`;
+    const takenDate = parseDriveDate(file.imageMediaMetadata?.time);
+    const fileDate = parseDriveDate(file.createdTime) || parseDriveDate(file.modifiedTime);
     return {
       id: file.id,
       name: file.name,
@@ -186,6 +210,8 @@ export async function listGoogleDriveMedia(env: GoogleDriveEnv): Promise<GoogleD
       kind: file.mimeType.startsWith("video/") ? "video" : "image",
       size,
       lastModified: file.modifiedTime ? Date.parse(file.modifiedTime) : 0,
+      displayDate: takenDate || fileDate,
+      dateKind: takenDate ? "taken" : "file",
       fingerprint: `drive:${checksum}`,
       thumbnailUrl: `/api/drive/thumbnail?id=${encodeURIComponent(file.id)}`,
     };

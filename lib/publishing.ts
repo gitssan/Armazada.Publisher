@@ -130,7 +130,7 @@ export async function publishToInstagram(
   asset: UploadedAsset,
   caption: string,
   env: PublishingEnv,
-  collaborator?: string,
+  collaborators: string[] = [],
 ) {
   const accountId = requireValue(env.INSTAGRAM_ACCOUNT_ID, "Instagram account-ID");
   const accessToken = requireValue(env.INSTAGRAM_ACCESS_TOKEN, "Instagram access-token");
@@ -138,8 +138,8 @@ export async function publishToInstagram(
   const baseUrl = `https://graph.instagram.com/${version}`;
   const createBody = new URLSearchParams({ caption, access_token: accessToken });
 
-  if (collaborator) {
-    createBody.set("collaborators", JSON.stringify([collaborator]));
+  if (collaborators.length) {
+    createBody.set("collaborators", JSON.stringify(collaborators));
   }
 
   if (asset.resourceType === "video") {

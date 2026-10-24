@@ -25,9 +25,14 @@ export async function POST(request: Request) {
   const form = await request.formData();
   const caption = String(form.get("caption") || "").trim();
   const fingerprint = String(form.get("fingerprint") || "");
-  const collaborator = String(form.get("collaborator") || "")
-    .trim()
-    .replace(/^@/, "");
+  const collaborators = [
+    ...new Set(
+      form
+        .getAll("collaborator")
+        .map((value) => String(value).trim().replace(/^@/, ""))
+        .filter(Boolean),
+    ),
+  ];
   const localMedia = form.get("media");
   const driveFileId = String(form.get("driveFileId") || "").trim();
 
@@ -43,8 +48,11 @@ export async function POST(request: Request) {
   if (!caption || caption.length > 2200) {
     return Response.json({ error: "De caption moet tussen 1 en 2.200 tekens bevatten." }, { status: 400 });
   }
-  if (collaborator && !/^[A-Za-z0-9._]{1,30}$/.test(collaborator)) {
-    return Response.json({ error: "De Instagram-gebruikersnaam van de collaborator is ongeldig." }, { status: 400 });
+  if (
+    collaborators.length > 3 ||
+    collaborators.some((collaborator) => !/^[A-Za-z0-9._]{1,30}$/.test(collaborator))
+  ) {
+    return Response.json({ error: "Een Instagram-gebruikersnaam van de collaborators is ongeldig." }, { status: 400 });
   }
 
   let temporaryAsset: Awaited<ReturnType<typeof uploadTemporaryAsset>> | null = null;
@@ -65,7 +73,7 @@ export async function POST(request: Request) {
     }
 
     temporaryAsset = await uploadTemporaryAsset(media, runtimeEnv);
-    const result = await publishToInstagram(temporaryAsset, caption, runtimeEnv, collaborator || undefined);
+    const result = await publishToInstagram(temporaryAsset, caption, runtimeEnv, collaborators);
     let historySaved = true;
 
     try {
