@@ -48,7 +48,8 @@ import {
 } from "@/components/ui/dialog";
 
 const COLLABORATOR_CREDITS = "@m1ndcycle · @christinedenouden";
-const DEFAULT_CAPTION = `Casa Armazada · Our home overlooking the Atlantic · Algarve, Portugal
+const ACCOUNT_CREDIT = "@armazada.atlantic · ";
+const DEFAULT_CAPTION = `${ACCOUNT_CREDIT}Casa Armazada · Our home overlooking the Atlantic · Algarve, Portugal
 
 A vision held for five years and brought to life through purposeful action, trust and inner alignment — a home and a way of life rooted in freedom and nature.
 
@@ -186,6 +187,11 @@ function withCollaboratorCredits(value: string) {
   return `${value.trimEnd()}\n\n${COLLABORATOR_CREDITS}`;
 }
 
+function withAccountCredit(value: string) {
+  if (value.trimStart().startsWith(ACCOUNT_CREDIT)) return value;
+  return `${ACCOUNT_CREDIT}${value.trimStart()}`;
+}
+
 async function makeItem(file: File): Promise<LibraryItem | null> {
   const kind = file.type.startsWith("image/")
     ? "image"
@@ -281,7 +287,7 @@ export default function Home() {
 
   useEffect(() => {
     const storedCaption = window.localStorage.getItem("armazada-caption");
-    if (storedCaption) setCaption(withCollaboratorCredits(storedCaption));
+    if (storedCaption) setCaption(withAccountCredit(withCollaboratorCredits(storedCaption)));
   }, []);
 
   useEffect(() => {
@@ -746,6 +752,21 @@ export default function Home() {
 
   function refreshRandomPreview() {
     setRandomPreview(chooseRandomMedia(randomCandidates, 5));
+  }
+
+  function refreshRandomPreviewItem(itemId: string) {
+    setRandomPreview((current) => {
+      const target = current.find((item) => item.id === itemId);
+      if (!target) return current;
+
+      const selectedIds = new Set(current.map((item) => item.id));
+      const available = randomCandidates.filter((item) => !selectedIds.has(item.id));
+      if (!available.length) return current;
+
+      const sameKind = available.filter((item) => item.kind === target.kind);
+      const replacement = shuffleItems(sameKind.length ? sameKind : available)[0];
+      return current.map((item) => (item.id === itemId ? replacement : item));
+    });
   }
 
   async function publishRandomPreview() {
@@ -1525,6 +1546,16 @@ export default function Home() {
                   {item.kind === "video" ? <Play className="size-3 fill-current" /> : <ImageIcon className="size-3" />}
                   {item.kind === "video" ? "Video" : "Foto"}
                 </span>
+                <button
+                  type="button"
+                  className="absolute inset-x-2 bottom-14 z-10 flex items-center justify-center gap-1 rounded-full bg-white/90 px-2 py-1.5 text-[10px] font-bold text-[#174e57] shadow-sm transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-45"
+                  disabled={randomCandidates.every((candidate) =>
+                    randomPreview.some((previewItem) => previewItem.id === candidate.id),
+                  )}
+                  onClick={() => refreshRandomPreviewItem(item.id)}
+                >
+                  <RefreshCw className="size-3" /> Vervang
+                </button>
                 <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent px-3 pb-3 pt-10 text-white">
                   <p className="truncate text-xs font-semibold">{item.name}</p>
                   <p className="mt-1 text-[10px] text-white/70">{formatMediaDate(item.displayDate)}</p>
