@@ -37,6 +37,15 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 const COLLABORATOR_CREDITS = "@m1ndcycle · @christinedenouden";
 const DEFAULT_CAPTION = `Casa Armazada · Our home overlooking the Atlantic · Algarve, Portugal
@@ -262,6 +271,8 @@ export default function Home() {
   const [isSyncingInstagram, setIsSyncingInstagram] = useState(false);
   const [instagramSyncNotice, setInstagramSyncNotice] = useState("");
   const [itemToRemove, setItemToRemove] = useState<LibraryItem | null>(null);
+  const [randomPreview, setRandomPreview] = useState<LibraryItem[]>([]);
+  const [isRandomPreviewOpen, setIsRandomPreviewOpen] = useState(false);
   const [libraryFilter, setLibraryFilter] = useState<LibraryFilter>("unpublished");
   const [mediaKindFilter, setMediaKindFilter] = useState<MediaKindFilter>("all");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
@@ -721,6 +732,37 @@ export default function Home() {
       }));
     });
     await publishItems(randomItems);
+  }
+
+  function openRandomPreview() {
+    const randomItems = chooseRandomMedia(randomCandidates, 5);
+    if (!randomItems.length) {
+      setNotice("Er zijn geen ongeplaatste bestanden beschikbaar.");
+      return;
+    }
+    setRandomPreview(randomItems);
+    setIsRandomPreviewOpen(true);
+  }
+
+  function refreshRandomPreview() {
+    setRandomPreview(chooseRandomMedia(randomCandidates, 5));
+  }
+
+  async function publishRandomPreview() {
+    const previewItems = randomPreview.filter((item) =>
+      randomCandidates.some((candidate) => candidate.id === item.id),
+    );
+    if (!previewItems.length) {
+      setIsRandomPreviewOpen(false);
+      setNotice("Deze selectie is niet meer beschikbaar. Maak een nieuwe preview.");
+      return;
+    }
+    const previewIds = new Set(previewItems.map((item) => item.id));
+    setItems((current) =>
+      current.map((item) => ({ ...item, selected: previewIds.has(item.id) })),
+    );
+    setIsRandomPreviewOpen(false);
+    await publishItems(previewItems);
   }
 
   useEffect(() => {
@@ -1364,11 +1406,24 @@ export default function Home() {
                 variant="outline"
                 className="h-12 w-full rounded-full border-[#8fbfc0] bg-[#edf7f5] text-[#0a4d5a] hover:bg-[#dcefeb]"
                 disabled={!randomCandidates.length || isPublishing || !configuration.ready}
+                onClick={openRandomPreview}
+              >
+                <ImageIcon />
+                {configuration.ready
+                  ? `Bekijk ${Math.min(5, randomCandidates.length) || "geen"} willekeurige`
+                  : "Koppelingen nog instellen"}
+              </Button>
+
+              <Button
+                size="lg"
+                variant="outline"
+                className="h-12 w-full rounded-full border-[#8fbfc0] bg-white text-[#0a4d5a] hover:bg-[#edf7f5]"
+                disabled={!randomCandidates.length || isPublishing || !configuration.ready}
                 onClick={publishRandomFive}
               >
                 {isPublishing ? <LoaderCircle className="animate-spin" /> : <Shuffle />}
                 {configuration.ready
-                  ? `Publiceer ${Math.min(5, randomCandidates.length) || "geen"} willekeurig`
+                  ? `Direct: publiceer ${Math.min(5, randomCandidates.length) || "geen"} willekeurig`
                   : "Koppelingen nog instellen"}
               </Button>
 
@@ -1433,6 +1488,74 @@ export default function Home() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog
+        open={isRandomPreviewOpen}
+        onOpenChange={(open) => {
+          setIsRandomPreviewOpen(open);
+          if (!open) setRandomPreview([]);
+        }}
+      >
+        <DialogContent className="max-h-[90vh] overflow-y-auto rounded-3xl border-[#d7e3e3] sm:max-w-4xl">
+          <DialogHeader>
+            <DialogTitle className="font-serif text-2xl text-[#123943]">
+              Preview willekeurige selectie
+            </DialogTitle>
+            <DialogDescription className="leading-6 text-[#58717a]">
+              Dit zijn de bestanden die met de vaste caption en collaborator-instellingen worden gepubliceerd. Er wordt pas iets naar Instagram gestuurd nadat je hieronder bevestigt.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+            {randomPreview.map((item, index) => (
+              <article
+                key={item.id}
+                className="relative aspect-[4/5] overflow-hidden rounded-2xl bg-[#d9e8e7]"
+              >
+                {item.kind === "image" || item.source === "drive" ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img className="h-full w-full object-cover" src={item.url} alt={item.name} />
+                ) : (
+                  <video className="h-full w-full object-cover" src={item.url} muted preload="metadata" />
+                )}
+                <span className="absolute left-2 top-2 rounded-full bg-white/90 px-2 py-1 text-[10px] font-bold text-[#174e57] shadow-sm">
+                  {index + 1}
+                </span>
+                <span className="absolute right-2 top-2 flex items-center gap-1 rounded-full bg-black/55 px-2 py-1 text-[10px] font-semibold text-white">
+                  {item.kind === "video" ? <Play className="size-3 fill-current" /> : <ImageIcon className="size-3" />}
+                  {item.kind === "video" ? "Video" : "Foto"}
+                </span>
+                <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent px-3 pb-3 pt-10 text-white">
+                  <p className="truncate text-xs font-semibold">{item.name}</p>
+                  <p className="mt-1 text-[10px] text-white/70">{formatMediaDate(item.displayDate)}</p>
+                </div>
+              </article>
+            ))}
+          </div>
+
+          <DialogFooter className="gap-2 sm:justify-between">
+            <DialogClose asChild>
+              <Button variant="outline" className="rounded-full">Annuleren</Button>
+            </DialogClose>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Button
+                variant="outline"
+                className="rounded-full border-[#8fbfc0] text-[#0a4d5a]"
+                onClick={refreshRandomPreview}
+              >
+                <Shuffle /> Opnieuw kiezen
+              </Button>
+              <Button
+                className="rounded-full bg-[#0a4d5a] text-white hover:bg-[#073e48]"
+                disabled={!randomPreview.length || isPublishing}
+                onClick={publishRandomPreview}
+              >
+                <Camera /> Publiceer deze {randomPreview.length}
+              </Button>
+            </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </main>
   );
 }
