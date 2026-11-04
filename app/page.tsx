@@ -15,6 +15,7 @@ import {
   Play,
   RefreshCw,
   Send,
+  Shuffle,
   SlidersHorizontal,
   EyeOff,
   Unlink,
@@ -134,6 +135,29 @@ function formatSize(bytes: number) {
 
 function compareFileNames(left: LibraryItem, right: LibraryItem) {
   return left.name.localeCompare(right.name, "nl", { numeric: true, sensitivity: "base" });
+}
+
+function shuffleItems<T>(values: T[]) {
+  const shuffled = [...values];
+  for (let index = shuffled.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [shuffled[index], shuffled[swapIndex]] = [shuffled[swapIndex], shuffled[index]];
+  }
+  return shuffled;
+}
+
+function chooseRandomMedia(candidates: LibraryItem[], limit = 5) {
+  const shuffled = shuffleItems(candidates);
+  if (shuffled.length <= limit) return shuffled;
+
+  const images = shuffled.filter((item) => item.kind === "image");
+  const videos = shuffled.filter((item) => item.kind === "video");
+  if (!images.length || !videos.length || limit < 2) return shuffled.slice(0, limit);
+
+  const chosen = [images[0], videos[0]];
+  const chosenIds = new Set(chosen.map((item) => item.id));
+  chosen.push(...shuffled.filter((item) => !chosenIds.has(item.id)).slice(0, limit - 2));
+  return shuffleItems(chosen);
 }
 
 function formatMediaDate(timestamp: number) {
@@ -280,6 +304,14 @@ export default function Home() {
     () =>
       sortedItems.filter(
         (item) => item.selected && item.status !== "published" && !item.forgotten,
+      ),
+    [sortedItems],
+  );
+  const randomCandidates = useMemo(
+    () =>
+      sortedItems.filter(
+        (item) =>
+          item.status !== "published" && item.status !== "publishing" && !item.forgotten,
       ),
     [sortedItems],
   );
@@ -571,16 +603,16 @@ export default function Home() {
     setLibraryNotice(`${item.name} staat klaar om nogmaals te publiceren.`);
   }
 
-  async function publishSelected() {
-    if (!selected.length || isPublishing || !configuration.ready) return;
+  async function publishItems(candidates: LibraryItem[]) {
+    if (!candidates.length || isPublishing || !configuration.ready) return;
     setIsPublishing(true);
     setProgress(0);
-    setProgressDetail(`1 van ${selected.length} · upload voorbereiden…`);
+    setProgressDetail(`1 van ${candidates.length} · upload voorbereiden…`);
     setNotice("");
     let publishedCount = 0;
     const publicationWarnings: string[] = [];
 
-    for (const [index, item] of selected.entries()) {
+    for (const [index, item] of candidates.entries()) {
       setItems((current) =>
         current.map((currentItem) =>
           currentItem.id === item.id ? { ...currentItem, status: "publishing" } : currentItem,
@@ -598,9 +630,9 @@ export default function Home() {
         if (item.source === "drive" && item.driveFileId) {
           form.set("driveFileId", item.driveFileId);
           setProgressDetail(
-            `${index + 1} van ${selected.length} · ${item.name} · ophalen uit Google Drive…`,
+            `${index + 1} van ${candidates.length} · ${item.name} · ophalen uit Google Drive…`,
           );
-          setProgress(Math.round(((index + 0.1) / selected.length) * 100));
+          setProgress(Math.round(((index + 0.1) / candidates.length) * 100));
           result = await publishDriveItem(form);
         } else if (item.file) {
           form.set("media", item.file, item.name);
@@ -608,16 +640,16 @@ export default function Home() {
             form,
             (uploadPercent) => {
               const overallPercent = Math.round(
-                ((index + uploadPercent / 100) / selected.length) * 100,
+                ((index + uploadPercent / 100) / candidates.length) * 100,
               );
               setProgress(overallPercent);
               setProgressDetail(
-                `${index + 1} van ${selected.length} · ${item.name} · upload ${uploadPercent}%`,
+                `${index + 1} van ${candidates.length} · ${item.name} · upload ${uploadPercent}%`,
               );
             },
             () => {
               setProgressDetail(
-                `${index + 1} van ${selected.length} · ${item.name} · upload 100% · Instagram verwerkt…`,
+                `${index + 1} van ${candidates.length} · ${item.name} · upload 100% · Instagram verwerkt…`,
               );
             },
           );
@@ -640,9 +672,9 @@ export default function Home() {
           ),
         );
 
-        if (inviteCollaborator && index < selected.length - 1) {
+        if (inviteCollaborator && index < candidates.length - 1) {
           setProgressDetail(
-            `${index + 1} van ${selected.length} · geplaatst · Instagram krijgt 8 seconden rust…`,
+            `${index + 1} van ${candidates.length} · geplaatst · Instagram krijgt 8 seconden rust…`,
           );
           await new Promise((resolve) => setTimeout(resolve, COLLABORATOR_COOLDOWN_MS));
         }
@@ -655,20 +687,40 @@ export default function Home() {
           ),
         );
       }
-      setProgress(Math.round(((index + 1) / selected.length) * 100));
+      setProgress(Math.round(((index + 1) / candidates.length) * 100));
     }
 
     if (publicationWarnings.length) {
       setNotice(
         `${publishedCount} ${publishedCount === 1 ? "post is" : "posts zijn"} gepubliceerd. ${publicationWarnings.length} ${publicationWarnings.length === 1 ? "collaborator-uitnodiging moet" : "sets collaborator-uitnodigingen moeten"} handmatig worden gecontroleerd.`,
       );
-    } else if (publishedCount === selected.length) {
+    } else if (publishedCount === candidates.length) {
       setNotice(`${publishedCount} ${publishedCount === 1 ? "post is" : "posts zijn"} gepubliceerd.`);
-      setProgressDetail(`Klaar · ${publishedCount} van ${selected.length} gepubliceerd`);
+      setProgressDetail(`Klaar · ${publishedCount} van ${candidates.length} gepubliceerd`);
     } else {
-      setProgressDetail(`Gereed · ${publishedCount} van ${selected.length} gepubliceerd`);
+      setProgressDetail(`Gereed · ${publishedCount} van ${candidates.length} gepubliceerd`);
     }
     setIsPublishing(false);
+  }
+
+  async function publishSelected() {
+    await publishItems(selected);
+  }
+
+  async function publishRandomFive() {
+    const randomItems = chooseRandomMedia(randomCandidates, 5);
+    if (!randomItems.length) {
+      setNotice("Er zijn geen ongeplaatste bestanden beschikbaar.");
+      return;
+    }
+    setItems((current) => {
+      const randomIds = new Set(randomItems.map((item) => item.id));
+      return current.map((item) => ({
+        ...item,
+        selected: randomIds.has(item.id),
+      }));
+    });
+    await publishItems(randomItems);
   }
 
   useEffect(() => {
@@ -1306,6 +1358,19 @@ export default function Home() {
                   {notice}
                 </p>
               ) : null}
+
+              <Button
+                size="lg"
+                variant="outline"
+                className="h-12 w-full rounded-full border-[#8fbfc0] bg-[#edf7f5] text-[#0a4d5a] hover:bg-[#dcefeb]"
+                disabled={!randomCandidates.length || isPublishing || !configuration.ready}
+                onClick={publishRandomFive}
+              >
+                {isPublishing ? <LoaderCircle className="animate-spin" /> : <Shuffle />}
+                {configuration.ready
+                  ? `Publiceer ${Math.min(5, randomCandidates.length) || "geen"} willekeurig`
+                  : "Koppelingen nog instellen"}
+              </Button>
 
               <Button
                 size="lg"
