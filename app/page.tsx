@@ -48,8 +48,8 @@ import {
 } from "@/components/ui/dialog";
 
 const COLLABORATOR_CREDITS = "@m1ndcycle · @christinedenouden";
-const ACCOUNT_CREDIT = "@armazada.atlantic · ";
-const DEFAULT_CAPTION = `${ACCOUNT_CREDIT}Casa Armazada · Our home overlooking the Atlantic · Algarve, Portugal
+const REMOVED_ACCOUNT_CREDIT = "@armazada.atlantic · ";
+const DEFAULT_CAPTION = `Casa Armazada · Our home overlooking the Atlantic · Algarve, Portugal
 
 A vision held for five years and brought to life through purposeful action, trust and inner alignment — a home and a way of life rooted in freedom and nature.
 
@@ -187,9 +187,11 @@ function withCollaboratorCredits(value: string) {
   return `${value.trimEnd()}\n\n${COLLABORATOR_CREDITS}`;
 }
 
-function withAccountCredit(value: string) {
-  if (value.trimStart().startsWith(ACCOUNT_CREDIT)) return value;
-  return `${ACCOUNT_CREDIT}${value.trimStart()}`;
+function withoutAccountCredit(value: string) {
+  const trimmedValue = value.trimStart();
+  return trimmedValue.startsWith(REMOVED_ACCOUNT_CREDIT)
+    ? trimmedValue.slice(REMOVED_ACCOUNT_CREDIT.length)
+    : value;
 }
 
 async function makeItem(file: File): Promise<LibraryItem | null> {
@@ -287,7 +289,7 @@ export default function Home() {
 
   useEffect(() => {
     const storedCaption = window.localStorage.getItem("armazada-caption");
-    if (storedCaption) setCaption(withAccountCredit(withCollaboratorCredits(storedCaption)));
+    if (storedCaption) setCaption(withoutAccountCredit(withCollaboratorCredits(storedCaption)));
   }, []);
 
   useEffect(() => {
