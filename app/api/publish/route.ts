@@ -75,9 +75,10 @@ export async function POST(request: Request) {
     temporaryAsset = await uploadTemporaryAsset(media, runtimeEnv);
     const result = await publishToInstagram(temporaryAsset, caption, runtimeEnv, collaborators);
     let historySaved = true;
+    let publicationId = 0;
 
     try {
-      await recordPublishedMedia({
+      publicationId = await recordPublishedMedia({
         fingerprint,
         fileName: media.name,
         fileSize: media.size,
@@ -100,6 +101,7 @@ export async function POST(request: Request) {
     return Response.json({
       ok: true,
       mediaId: result.mediaId,
+      publicationId,
       historySaved,
       collaboration: result.collaboration,
       warning:

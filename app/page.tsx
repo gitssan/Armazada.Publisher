@@ -78,6 +78,20 @@ type CollaboratorDetail = {
   inviteStatus?: string;
 };
 
+type PublicationHistory = {
+  publicationId: number;
+  fingerprint: string;
+  instagramMediaId: string;
+  publishedAt: number;
+  instagramStatus: "active" | "removed";
+  instagramCheckedAt: number | null;
+  instagramRemovedAt: number | null;
+  collaboratorsRequested: string[];
+  collaboratorStatus: CollaborationStatus;
+  collaboratorDetails: CollaboratorDetail[];
+  collaboratorCheckedAt: number | null;
+};
+
 type LibraryItem = {
   id: string;
   source: "drive" | "local";
@@ -95,6 +109,7 @@ type LibraryItem = {
   forgotten: boolean;
   collaborationStatus: CollaborationStatus;
   collaborationDetails: CollaboratorDetail[];
+  publications: PublicationHistory[];
   selected: boolean;
   status: "idle" | "publishing" | "published" | "removed" | "error";
 };
@@ -125,9 +140,13 @@ type Configuration = {
 type PublishResult = {
   error?: string;
   warning?: string;
+  mediaId?: string;
+  publicationId?: number;
   collaboration?: {
     status?: CollaborationStatus;
     details?: CollaboratorDetail[];
+    requested?: string[];
+    checkedAt?: number | null;
   };
 };
 
@@ -138,10 +157,12 @@ type InstagramSyncResult = {
   instagramPostCount?: number;
   otherInstagramPosts?: number;
   collaborations?: Array<{
+    publicationId: number;
     fingerprint: string;
     status: CollaborationStatus;
     details: CollaboratorDetail[];
   }>;
+  publications?: PublicationHistory[];
   error?: string;
 };
 
@@ -262,6 +283,17 @@ function formatMediaDate(timestamp: number) {
   }).format(timestamp);
 }
 
+function formatPublicationDate(timestamp: number) {
+  if (!timestamp) return "Datum onbekend";
+  return new Intl.DateTimeFormat("nl-NL", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(timestamp);
+}
+
 function withCollaboratorCredits(value: string) {
   if (value.includes("@christinedenouden")) return value;
   if (value.includes("@m1ndcycle")) {
@@ -304,6 +336,7 @@ async function makeItem(file: File): Promise<LibraryItem | null> {
     forgotten: false,
     collaborationStatus: "not_requested",
     collaborationDetails: [],
+    publications: [],
     selected: true,
     status: "idle",
   };
@@ -543,6 +576,7 @@ export default function Home() {
           status: CollaborationStatus;
           details: CollaboratorDetail[];
         }>;
+        publications?: PublicationHistory[];
       };
       const published = new Set(result.published || []);
       const removed = new Set(result.removed || []);
@@ -552,11 +586,21 @@ export default function Home() {
           collaboration,
         ]),
       );
+      const publications = new Map<string, PublicationHistory[]>();
+      for (const publication of result.publications || []) {
+        const history = publications.get(publication.fingerprint) || [];
+        history.push(publication);
+        publications.set(publication.fingerprint, history);
+      }
+      publications.forEach((history) =>
+        history.sort((left, right) => right.publishedAt - left.publishedAt),
+      );
       setItems((current) =>
         current.map((item) => {
           const collaboration = collaborations.get(item.fingerprint);
           const collaborationStatus = collaboration?.status ?? item.collaborationStatus;
           const collaborationDetails = collaboration?.details ?? item.collaborationDetails;
+          const publicationHistory = publications.get(item.fingerprint) ?? item.publications;
           if (published.has(item.fingerprint)) {
             return {
               ...item,
@@ -564,6 +608,7 @@ export default function Home() {
               selected: false,
               collaborationStatus,
               collaborationDetails,
+              publications: publicationHistory,
             };
           }
           if (removed.has(item.fingerprint)) {
@@ -573,9 +618,15 @@ export default function Home() {
               selected: false,
               collaborationStatus,
               collaborationDetails,
+              publications: publicationHistory,
             };
           }
-          return { ...item, collaborationStatus, collaborationDetails };
+          return {
+            ...item,
+            collaborationStatus,
+            collaborationDetails,
+            publications: publicationHistory,
+          };
         }),
       );
     } catch {
@@ -594,30 +645,46 @@ export default function Home() {
 
       const active = new Set(result.active || []);
       const removed = new Set(result.removed || []);
-      const collaborations = new Map(
-        (result.collaborations || []).map((collaboration) => [
-          collaboration.fingerprint,
-          collaboration,
-        ]),
+      const publications = new Map<string, PublicationHistory[]>();
+      for (const publication of result.publications || []) {
+        const history = publications.get(publication.fingerprint) || [];
+        history.push(publication);
+        publications.set(publication.fingerprint, history);
+      }
+      publications.forEach((history) =>
+        history.sort((left, right) => right.publishedAt - left.publishedAt),
       );
       const candidateFingerprints = new Set(candidates.map((item) => item.fingerprint));
       setItems((current) =>
         current.map((item) => {
           if (!candidateFingerprints.has(item.fingerprint)) return item;
-          const collaboration = collaborations.get(item.fingerprint);
-          const collaborationFields = collaboration
+          const publicationHistory = publications.get(item.fingerprint) ?? item.publications;
+          const latestPublication = publicationHistory[0];
+          const collaborationFields = latestPublication
             ? {
-                collaborationStatus: collaboration.status,
-                collaborationDetails: collaboration.details,
+                collaborationStatus: latestPublication.collaboratorStatus,
+                collaborationDetails: latestPublication.collaboratorDetails,
               }
             : {};
           if (active.has(item.fingerprint)) {
-            return { ...item, status: "published", selected: false, ...collaborationFields };
+            return {
+              ...item,
+              status: "published",
+              selected: false,
+              publications: publicationHistory,
+              ...collaborationFields,
+            };
           }
           if (removed.has(item.fingerprint)) {
-            return { ...item, status: "removed", selected: false, ...collaborationFields };
+            return {
+              ...item,
+              status: "removed",
+              selected: false,
+              publications: publicationHistory,
+              ...collaborationFields,
+            };
           }
-          return { ...item, ...collaborationFields };
+          return { ...item, publications: publicationHistory, ...collaborationFields };
         }),
       );
 
@@ -626,7 +693,9 @@ export default function Home() {
         hour: "2-digit",
         minute: "2-digit",
       }).format(checkedAt);
-      const activeCount = active.size;
+      const activeCount = (result.publications || []).filter(
+        (publication) => publication.instagramStatus === "active",
+      ).length;
       const removedTotal = removed.size;
       const removedInLibrary = candidates.filter((item) => removed.has(item.fingerprint)).length;
       const removedFromHistory = Math.max(0, removedTotal - removedInLibrary);
@@ -651,7 +720,7 @@ export default function Home() {
         0,
       );
       setInstagramSyncNotice(
-        `Instagram gecontroleerd om ${time} · ${activeCount} app-${activeCount === 1 ? "post" : "posts"} aanwezig · ${removedInLibrary} verwijderd en opnieuw beschikbaar${removedFromHistory ? ` · ${removedFromHistory} oudere verwijderde ${removedFromHistory === 1 ? "plaatsing" : "plaatsingen"}` : ""} · ${unresolvedCollaborators} collab-${unresolvedCollaborators === 1 ? "uitnodiging is" : "uitnodigingen zijn"} nog niet geaccepteerd${declinedCollaborators ? ` · ${declinedCollaborators} geweigerd` : ""} · ${otherCount} overige Instagram-${otherCount === 1 ? "post" : "posts"}.`,
+        `Instagram gecontroleerd om ${time} · ${activeCount} app-${activeCount === 1 ? "publicatie" : "publicaties"} aanwezig · ${removedInLibrary} bestanden volledig verwijderd en opnieuw beschikbaar${removedFromHistory ? ` · ${removedFromHistory} oudere verwijderde ${removedFromHistory === 1 ? "plaatsing" : "plaatsingen"}` : ""} · ${unresolvedCollaborators} collab-${unresolvedCollaborators === 1 ? "uitnodiging is" : "uitnodigingen zijn"} nog niet geaccepteerd${declinedCollaborators ? ` · ${declinedCollaborators} geweigerd` : ""} · ${otherCount} overige Instagram-${otherCount === 1 ? "post" : "posts"}.`,
       );
     } catch (error) {
       setInstagramSyncNotice(
@@ -765,6 +834,7 @@ export default function Home() {
           forgotten: current?.forgotten ?? false,
           collaborationStatus: current?.collaborationStatus ?? "unknown",
           collaborationDetails: current?.collaborationDetails ?? [],
+          publications: current?.publications ?? [],
           selected:
             current?.selected ?? (current?.status !== "published" && !current?.forgotten),
           status: current?.status ?? "idle",
@@ -888,6 +958,7 @@ export default function Home() {
         }
         if (result.warning) publicationWarnings.push(`${item.name}: ${result.warning}`);
         publishedCount += 1;
+        const publishedAt = Date.now();
         setItems((current) =>
           current.map((currentItem) =>
             currentItem.id === item.id
@@ -899,6 +970,28 @@ export default function Home() {
                     result.collaboration?.status ?? currentItem.collaborationStatus,
                   collaborationDetails:
                     result.collaboration?.details ?? currentItem.collaborationDetails,
+                  publications: result.mediaId
+                    ? [
+                        {
+                          publicationId: result.publicationId || publishedAt,
+                          fingerprint: currentItem.fingerprint,
+                          instagramMediaId: result.mediaId,
+                          publishedAt,
+                          instagramStatus: "active",
+                          instagramCheckedAt: null,
+                          instagramRemovedAt: null,
+                          collaboratorsRequested:
+                            result.collaboration?.requested ||
+                            (inviteCollaborator ? DEFAULT_COLLABORATORS : []),
+                          collaboratorStatus:
+                            result.collaboration?.status ?? "unverified",
+                          collaboratorDetails: result.collaboration?.details || [],
+                          collaboratorCheckedAt:
+                            result.collaboration?.checkedAt ?? null,
+                        },
+                        ...currentItem.publications,
+                      ]
+                    : currentItem.publications,
                 }
               : currentItem,
           ),
@@ -1541,6 +1634,11 @@ export default function Home() {
                             <Check className="size-4" strokeWidth={3} />
                             Geplaatst
                           </span>
+                          {item.publications.length > 1 ? (
+                            <span className="rounded-full bg-[#123943]/85 px-3 py-1 text-[10px] font-semibold text-white">
+                              {item.publications.length} plaatsingen
+                            </span>
+                          ) : null}
                           {item.collaborationStatus === "partial" || item.collaborationStatus === "unverified" || item.collaborationStatus === "unknown" ? (
                             <span className="rounded-full bg-amber-50 px-3 py-1 text-[10px] font-semibold text-amber-800">
                               Collab controleren
@@ -1814,33 +1912,65 @@ export default function Home() {
                   <div className="flex justify-between gap-4"><span className="text-[#6a8389]">Status</span><strong className="text-right text-[#153d46]">{previewItem.status === "published" ? "Geplaatst" : previewItem.status === "removed" ? "Verwijderd op Instagram" : previewItem.status === "error" ? "Eerder mislukt" : "Nog te plaatsen"}</strong></div>
                 </div>
 
-                {previewItem.collaborationDetails.length ? (
+                {previewItem.publications.length ? (
                   <div className="mt-4 rounded-2xl border border-[#d6e5e4] bg-white p-4">
                     <div className="flex items-center justify-between gap-3">
-                      <p className="text-sm font-semibold text-[#153d46]">Collaborators</p>
+                      <p className="text-sm font-semibold text-[#153d46]">Publicatiehistorie</p>
                       <span className="text-[10px] uppercase tracking-[0.12em] text-[#71878c]">
-                        Instagram-status
+                        {previewItem.publications.length} {previewItem.publications.length === 1 ? "plaatsing" : "plaatsingen"}
                       </span>
                     </div>
-                    <div className="mt-3 space-y-2">
-                      {previewItem.collaborationDetails.map((detail) => (
+                    <div className="mt-3 space-y-3">
+                      {previewItem.publications.map((publication, publicationIndex) => (
                         <div
-                          key={detail.username}
-                          className="flex items-center justify-between gap-3 rounded-xl bg-[#f7faf9] px-3 py-2"
+                          key={publication.publicationId}
+                          className="rounded-xl border border-[#e0e9e8] bg-[#f7faf9] px-3 py-3"
                         >
-                          <span className="truncate text-sm font-medium text-[#173f47]">
-                            @{detail.username}
-                          </span>
-                          <span
-                            className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-semibold ring-1 ring-inset ${collaboratorStatusClasses(detail.inviteStatus)}`}
-                          >
-                            {collaboratorStatusLabel(detail.inviteStatus)}
-                          </span>
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="text-xs font-semibold text-[#173f47]">
+                                Plaatsing {previewItem.publications.length - publicationIndex}
+                              </p>
+                              <p className="mt-0.5 text-[11px] text-[#71878c]">
+                                {formatPublicationDate(publication.publishedAt)}
+                              </p>
+                            </div>
+                            <span
+                              className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-semibold ${
+                                publication.instagramStatus === "active"
+                                  ? "bg-emerald-50 text-emerald-800"
+                                  : "bg-amber-50 text-amber-800"
+                              }`}
+                            >
+                              {publication.instagramStatus === "active" ? "Aanwezig" : "Verwijderd"}
+                            </span>
+                          </div>
+                          {publication.collaboratorDetails.length ? (
+                            <div className="mt-3 space-y-1.5">
+                              {publication.collaboratorDetails.map((detail) => (
+                                <div
+                                  key={`${publication.publicationId}:${detail.username}`}
+                                  className="flex items-center justify-between gap-3"
+                                >
+                                  <span className="truncate text-xs font-medium text-[#365d64]">
+                                    @{detail.username}
+                                  </span>
+                                  <span
+                                    className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ring-inset ${collaboratorStatusClasses(detail.inviteStatus)}`}
+                                  >
+                                    {collaboratorStatusLabel(detail.inviteStatus)}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="mt-2 text-[11px] text-[#71878c]">Geen collaborators aangevraagd.</p>
+                          )}
                         </div>
                       ))}
                     </div>
                     <p className="mt-3 text-[11px] leading-4 text-[#71878c]">
-                      Wordt opnieuw bijgewerkt wanneer je bovenaan op Controleer Instagram klikt.
+                      Iedere nieuwe plaatsing blijft afzonderlijk bewaard en wordt bijgewerkt via Controleer Instagram.
                     </p>
                   </div>
                 ) : null}

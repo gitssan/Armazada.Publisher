@@ -25,6 +25,7 @@ export async function POST() {
     ]);
     const checkedAt = Date.now();
     const presence = records.map((record) => ({
+      publicationId: record.publicationId,
       fingerprint: record.fingerprint,
       active: instagramIds.has(record.instagramMediaId),
     }));
@@ -35,6 +36,7 @@ export async function POST() {
         instagramIds.has(record.instagramMediaId) && record.collaboratorsRequested.length > 0,
     );
     const collaborations: Array<{
+      publicationId: number;
       fingerprint: string;
       requested: string[];
       status: "not_requested" | "confirmed" | "partial" | "unverified";
@@ -45,6 +47,7 @@ export async function POST() {
       const batch = collaborationRecords.slice(offset, offset + 4);
       const results = await Promise.all(
         batch.map(async (record) => ({
+          publicationId: record.publicationId,
           fingerprint: record.fingerprint,
           ...(await verifyInstagramCollaborators(
             record.instagramMediaId,
@@ -58,8 +61,28 @@ export async function POST() {
     }
     await updateCollaborationStatuses(collaborations);
 
-    const active = presence.filter((record) => record.active).map((record) => record.fingerprint);
-    const removed = presence.filter((record) => !record.active).map((record) => record.fingerprint);
+    const active = [
+      ...new Set(presence.filter((record) => record.active).map((record) => record.fingerprint)),
+    ];
+    const allFingerprints = new Set(records.map((record) => record.fingerprint));
+    const activeFingerprints = new Set(active);
+    const removed = [...allFingerprints].filter(
+      (fingerprint) => !activeFingerprints.has(fingerprint),
+    );
+    const collaborationByPublication = new Map(
+      collaborations.map((collaboration) => [collaboration.publicationId, collaboration]),
+    );
+    const publications = records.map((record) => {
+      const collaboration = collaborationByPublication.get(record.publicationId);
+      return {
+        ...record,
+        instagramStatus: instagramIds.has(record.instagramMediaId) ? "active" : "removed",
+        instagramCheckedAt: checkedAt,
+        collaboratorStatus: collaboration?.status ?? record.collaboratorStatus,
+        collaboratorDetails: collaboration?.details ?? record.collaboratorDetails,
+        collaboratorCheckedAt: collaboration?.checkedAt ?? record.collaboratorCheckedAt,
+      };
+    });
     const trackedIds = new Set(records.map((record) => record.instagramMediaId));
     const otherInstagramPosts = [...instagramIds].filter((id) => !trackedIds.has(id)).length;
 
@@ -70,6 +93,7 @@ export async function POST() {
         active,
         removed,
         collaborations,
+        publications,
         instagramPostCount: instagramIds.size,
         otherInstagramPosts,
       },

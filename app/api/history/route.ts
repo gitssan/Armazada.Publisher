@@ -1,5 +1,6 @@
 import {
   findCollaborationStatuses,
+  findPublicationHistories,
   findPublishedFingerprints,
   findRemovedFingerprints,
 } from "@/db/media-history";
@@ -13,13 +14,14 @@ export async function POST(request: Request) {
     (value): value is string => typeof value === "string" && value.length > 0 && value.length <= 1024,
   );
   try {
-    const [published, removed, collaborations] = await Promise.all([
+    const [published, removed, collaborations, publications] = await Promise.all([
       findPublishedFingerprints(fingerprints),
       findRemovedFingerprints(fingerprints),
       findCollaborationStatuses(fingerprints),
+      findPublicationHistories(fingerprints),
     ]);
     return Response.json(
-      { published, removed, collaborations },
+      { published, removed, collaborations, publications },
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (error) {
