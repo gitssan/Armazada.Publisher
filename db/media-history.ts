@@ -113,6 +113,31 @@ export async function listPublishedMedia() {
   return result.results;
 }
 
+export async function listPublishedMediaForInsights() {
+  const database = getDatabase();
+  const result = await database
+    .prepare(
+      `SELECT fingerprint,
+              file_name AS fileName,
+              media_type AS mediaType,
+              instagram_media_id AS instagramMediaId,
+              published_at AS publishedAt,
+              instagram_status AS instagramStatus
+       FROM published_media
+       WHERE instagram_status = 'active'
+       ORDER BY published_at DESC`,
+    )
+    .all<{
+      fingerprint: string;
+      fileName: string;
+      mediaType: "image" | "video";
+      instagramMediaId: string;
+      publishedAt: number;
+      instagramStatus: string;
+    }>();
+  return result.results;
+}
+
 export async function updateInstagramMediaPresence(
   presence: Array<{ fingerprint: string; active: boolean }>,
   checkedAt: number,

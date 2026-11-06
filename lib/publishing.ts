@@ -23,6 +23,20 @@ type CollaboratorVerification = {
   warning?: string;
 };
 
+type InstagramMediaInsights = {
+  mediaId: string;
+  permalink?: string;
+  mediaProductType?: string;
+  likes: number;
+  comments: number;
+  views: number | null;
+  reach: number | null;
+  saved: number | null;
+  shares: number | null;
+  totalInteractions: number | null;
+  warning?: string;
+};
+
 function requireValue(value: string | undefined, name: string) {
   if (!value) throw new Error(`${name} ontbreekt in de app-instellingen.`);
   return value;
@@ -284,4 +298,66 @@ export async function listInstagramMediaIds(env: PublishingEnv) {
   return ids;
 }
 
-export type { PublishingEnv };
+function metricValue(payload: JsonRecord, metric: string) {
+  const data = Array.isArray(payload.data) ? payload.data : [];
+  const entry = data.find((item) => (item as JsonRecord).name === metric) as JsonRecord | undefined;
+  if (!entry) return null;
+
+  const totalValue = entry.total_value as JsonRecord | undefined;
+  if (typeof totalValue?.value === "number") return totalValue.value;
+
+  const values = Array.isArray(entry.values) ? entry.values : [];
+  const firstValue = values[0] as JsonRecord | undefined;
+  return typeof firstValue?.value === "number" ? firstValue.value : null;
+}
+
+export async function getInstagramMediaInsights(
+  mediaId: string,
+  env: PublishingEnv,
+): Promise<InstagramMediaInsights> {
+  const accessToken = requireValue(env.INSTAGRAM_ACCESS_TOKEN, "Instagram access-token");
+  const version = env.META_GRAPH_VERSION || "v25.0";
+  const baseUrl = `https://graph.instagram.com/${version}`;
+  const metadataUrl = new URL(`${baseUrl}/${encodeURIComponent(mediaId)}`);
+  metadataUrl.searchParams.set(
+    "fields",
+    "id,media_product_type,permalink,like_count,comments_count",
+  );
+  metadataUrl.searchParams.set("access_token", accessToken);
+
+  const metadataResponse = await fetch(metadataUrl, { headers: { Accept: "application/json" } });
+  const metadata = await parseJson(metadataResponse);
+  const metrics = ["views", "reach", "saved", "shares", "total_interactions"];
+  const insightsUrl = new URL(`${baseUrl}/${encodeURIComponent(mediaId)}/insights`);
+  insightsUrl.searchParams.set("metric", metrics.join(","));
+  insightsUrl.searchParams.set("access_token", accessToken);
+
+  let insights: JsonRecord = {};
+  let warning: string | undefined;
+  try {
+    const insightsResponse = await fetch(insightsUrl, { headers: { Accept: "application/json" } });
+    insights = await parseJson(insightsResponse);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Instagram Insights is niet beschikbaar.";
+    warning = /permission|insufficient|manage_insights|toegang|machtiging/i.test(message)
+      ? "De Instagram-token mist waarschijnlijk de Insights-toestemming. Maak een nieuwe token met instagram_business_manage_insights."
+      : `Niet alle Insights zijn beschikbaar: ${message}`;
+  }
+
+  return {
+    mediaId,
+    permalink: typeof metadata.permalink === "string" ? metadata.permalink : undefined,
+    mediaProductType:
+      typeof metadata.media_product_type === "string" ? metadata.media_product_type : undefined,
+    likes: typeof metadata.like_count === "number" ? metadata.like_count : 0,
+    comments: typeof metadata.comments_count === "number" ? metadata.comments_count : 0,
+    views: metricValue(insights, "views"),
+    reach: metricValue(insights, "reach"),
+    saved: metricValue(insights, "saved"),
+    shares: metricValue(insights, "shares"),
+    totalInteractions: metricValue(insights, "total_interactions"),
+    warning,
+  };
+}
+
+export type { InstagramMediaInsights, PublishingEnv };

@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  BarChart3,
+  Bookmark,
   Check,
   Camera,
   ChevronDown,
@@ -12,11 +14,14 @@ import {
   Image as ImageIcon,
   LoaderCircle,
   MoreHorizontal,
+  MessageCircle,
   Play,
   RefreshCw,
   Send,
   Shuffle,
+  Share2,
   SlidersHorizontal,
+  Users,
   EyeOff,
   Unlink,
   Trash2,
@@ -124,6 +129,31 @@ type InstagramSyncResult = {
   error?: string;
 };
 
+type InstagramInsight = {
+  fingerprint: string;
+  fileName: string;
+  mediaType: "image" | "video";
+  instagramMediaId: string;
+  publishedAt: number;
+  permalink?: string;
+  mediaProductType?: string;
+  likes: number;
+  comments: number;
+  views: number | null;
+  reach: number | null;
+  saved: number | null;
+  shares: number | null;
+  totalInteractions: number | null;
+  warning?: string;
+};
+
+type InstagramInsightsResult = {
+  checkedAt?: number;
+  insights?: InstagramInsight[];
+  warnings?: string[];
+  error?: string;
+};
+
 type ModelContext = {
   registerTool: (
     tool: {
@@ -141,6 +171,11 @@ type ModelContext = {
 function formatSize(bytes: number) {
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function formatMetric(value: number | null | undefined) {
+  if (value === null || value === undefined) return "—";
+  return new Intl.NumberFormat("nl-NL", { notation: "compact", maximumFractionDigits: 1 }).format(value);
 }
 
 function compareFileNames(left: LibraryItem, right: LibraryItem) {
@@ -278,6 +313,12 @@ export default function Home() {
   const [isLoadingDrive, setIsLoadingDrive] = useState(false);
   const [isSyncingInstagram, setIsSyncingInstagram] = useState(false);
   const [instagramSyncNotice, setInstagramSyncNotice] = useState("");
+  const [isInsightsOpen, setIsInsightsOpen] = useState(false);
+  const [isLoadingInsights, setIsLoadingInsights] = useState(false);
+  const [instagramInsights, setInstagramInsights] = useState<InstagramInsight[]>([]);
+  const [insightsCheckedAt, setInsightsCheckedAt] = useState<number | null>(null);
+  const [insightsWarnings, setInsightsWarnings] = useState<string[]>([]);
+  const [insightsError, setInsightsError] = useState("");
   const [itemToRemove, setItemToRemove] = useState<LibraryItem | null>(null);
   const [randomPreview, setRandomPreview] = useState<LibraryItem[]>([]);
   const [isRandomPreviewOpen, setIsRandomPreviewOpen] = useState(false);
@@ -371,6 +412,52 @@ export default function Home() {
   const forgottenCount = items.filter((item) => item.forgotten).length;
   const allSelected =
     selectableVisibleItems.length > 0 && selectableVisibleItems.every((item) => item.selected);
+  const insightSummary = useMemo(
+    () =>
+      instagramInsights.reduce(
+        (summary, insight) => ({
+          views: summary.views + (insight.views || 0),
+          reach: summary.reach + (insight.reach || 0),
+          interactions:
+            summary.interactions +
+            (insight.totalInteractions ??
+              insight.likes + insight.comments + (insight.saved || 0) + (insight.shares || 0)),
+          saved: summary.saved + (insight.saved || 0),
+          shares: summary.shares + (insight.shares || 0),
+        }),
+        { views: 0, reach: 0, interactions: 0, saved: 0, shares: 0 },
+      ),
+    [instagramInsights],
+  );
+  const sortedInsights = useMemo(
+    () =>
+      [...instagramInsights].sort(
+        (left, right) => (right.views ?? -1) - (left.views ?? -1),
+      ),
+    [instagramInsights],
+  );
+  const maximumInsightViews = Math.max(1, ...instagramInsights.map((insight) => insight.views || 0));
+
+  async function loadInstagramInsights() {
+    if (isLoadingInsights) return;
+    setIsInsightsOpen(true);
+    setIsLoadingInsights(true);
+    setInsightsError("");
+    try {
+      const response = await fetch("/api/instagram-insights", { cache: "no-store" });
+      const result = (await response.json().catch(() => ({}))) as InstagramInsightsResult;
+      if (!response.ok) throw new Error(result.error || "Instagram-statistieken laden is mislukt.");
+      setInstagramInsights(result.insights || []);
+      setInsightsWarnings(result.warnings || []);
+      setInsightsCheckedAt(result.checkedAt || Date.now());
+    } catch (error) {
+      setInsightsError(
+        error instanceof Error ? error.message : "Instagram-statistieken laden is mislukt.",
+      );
+    } finally {
+      setIsLoadingInsights(false);
+    }
+  }
 
   async function markPublished(candidates: LibraryItem[]) {
     if (!candidates.length) return;
@@ -940,15 +1027,26 @@ export default function Home() {
                 </Button>
               ) : null}
               {configuration.instagram ? (
-                <Button
-                  variant="outline"
-                  className="rounded-full border-[#b9d2d5] bg-white text-[#123b45]"
-                  disabled={isSyncingInstagram}
-                  onClick={() => void syncInstagram()}
-                >
-                  {isSyncingInstagram ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}
-                  Controleer Instagram
-                </Button>
+                <>
+                  <Button
+                    variant="outline"
+                    className="rounded-full border-[#b9d2d5] bg-white text-[#123b45]"
+                    disabled={isLoadingInsights}
+                    onClick={() => void loadInstagramInsights()}
+                  >
+                    {isLoadingInsights ? <LoaderCircle className="animate-spin" /> : <BarChart3 />}
+                    Statistieken
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="rounded-full border-[#b9d2d5] bg-white text-[#123b45]"
+                    disabled={isSyncingInstagram}
+                    onClick={() => void syncInstagram()}
+                  >
+                    {isSyncingInstagram ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}
+                    Controleer Instagram
+                  </Button>
+                </>
               ) : null}
             </div>
           </div>
@@ -1478,6 +1576,163 @@ export default function Home() {
           </div>
         </aside>
       </div>
+
+      <Dialog open={isInsightsOpen} onOpenChange={setIsInsightsOpen}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto rounded-3xl border-[#d7e3e3] sm:max-w-5xl">
+          <DialogHeader>
+            <DialogTitle className="font-serif text-3xl text-[#123943]">
+              Instagram-statistieken
+            </DialogTitle>
+            <DialogDescription className="leading-6 text-[#58717a]">
+              Live cijfers van de posts die met Armazada Publisher zijn geplaatst. Bereik is het
+              aantal unieke accounts; weergaven kunnen meerdere keren door hetzelfde account zijn opgebouwd.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-xs text-[#6e858a]">
+              {insightsCheckedAt
+                ? `Bijgewerkt ${new Intl.DateTimeFormat("nl-NL", {
+                    day: "numeric",
+                    month: "short",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  }).format(insightsCheckedAt)}`
+                : "Nog niet bijgewerkt"}
+            </p>
+            <Button
+              variant="outline"
+              className="rounded-full border-[#b9d2d5]"
+              disabled={isLoadingInsights}
+              onClick={() => void loadInstagramInsights()}
+            >
+              {isLoadingInsights ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}
+              Vernieuw cijfers
+            </Button>
+          </div>
+
+          {insightsError ? (
+            <p className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {insightsError}
+            </p>
+          ) : null}
+          {insightsWarnings.length ? (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">
+              {insightsWarnings.map((warning) => (
+                <p key={warning}>{warning}</p>
+              ))}
+            </div>
+          ) : null}
+
+          {isLoadingInsights && !instagramInsights.length ? (
+            <div className="grid min-h-64 place-items-center text-[#52747b]">
+              <span className="flex items-center gap-3 text-sm font-medium">
+                <LoaderCircle className="size-5 animate-spin" /> Instagram-cijfers worden opgehaald…
+              </span>
+            </div>
+          ) : instagramInsights.length ? (
+            <>
+              <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+                {[
+                  ["Weergaven", insightSummary.views, BarChart3],
+                  ["Bereik", insightSummary.reach, Users],
+                  ["Interacties", insightSummary.interactions, Heart],
+                  ["Opgeslagen", insightSummary.saved, Bookmark],
+                  ["Gedeeld", insightSummary.shares, Share2],
+                ].map(([label, value, Icon]) => (
+                  <div key={String(label)} className="rounded-2xl border border-[#d6e5e4] bg-[#f5faf9] p-4">
+                    <span className="grid size-8 place-items-center rounded-full bg-white text-[#26636b] shadow-sm">
+                      <Icon className="size-4" />
+                    </span>
+                    <p className="mt-4 text-2xl font-semibold text-[#123943]">{formatMetric(value as number)}</p>
+                    <p className="mt-1 text-xs text-[#6a8389]">{label as string}</p>
+                  </div>
+                ))}
+              </div>
+
+              <div className="space-y-3">
+                {sortedInsights.map((insight) => {
+                  const item = items.find((candidate) => candidate.fingerprint === insight.fingerprint);
+                  const interactions =
+                    insight.totalInteractions ??
+                    insight.likes + insight.comments + (insight.saved || 0) + (insight.shares || 0);
+                  const engagement = insight.reach ? (interactions / insight.reach) * 100 : null;
+                  return (
+                    <article
+                      key={insight.instagramMediaId}
+                      className="grid gap-4 rounded-2xl border border-[#dbe7e6] bg-white p-3 sm:grid-cols-[72px_minmax(0,1fr)]"
+                    >
+                      <div className="aspect-square overflow-hidden rounded-xl bg-[#d9e8e7]">
+                        {item ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img className="h-full w-full object-cover" src={item.url} alt={insight.fileName} />
+                        ) : (
+                          <span className="grid h-full place-items-center text-[#52747b]">
+                            {insight.mediaType === "video" ? <Film /> : <ImageIcon />}
+                          </span>
+                        )}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-semibold text-[#163d46]">{insight.fileName}</p>
+                            <p className="mt-1 text-xs text-[#6e858a]">
+                              Geplaatst {formatMediaDate(insight.publishedAt)} · {insight.mediaType === "video" ? "Video" : "Foto"}
+                            </p>
+                          </div>
+                          {insight.permalink ? (
+                            <a
+                              href={insight.permalink}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-xs font-semibold text-[#176a72] hover:underline"
+                            >
+                              Bekijk op Instagram
+                            </a>
+                          ) : null}
+                        </div>
+                        <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[#e5efee]">
+                          <div
+                            className="h-full rounded-full bg-[#2d7e83]"
+                            style={{ width: `${Math.max(2, ((insight.views || 0) / maximumInsightViews) * 100)}%` }}
+                          />
+                        </div>
+                        <div className="mt-3 grid grid-cols-4 gap-x-3 gap-y-2 text-xs sm:grid-cols-8">
+                          <span><strong className="block text-[#173f47]">{formatMetric(insight.views)}</strong><span className="text-[#71878c]">Views</span></span>
+                          <span><strong className="block text-[#173f47]">{formatMetric(insight.reach)}</strong><span className="text-[#71878c]">Bereik</span></span>
+                          <span><strong className="block text-[#173f47]">{engagement === null ? "—" : `${engagement.toFixed(1)}%`}</strong><span className="text-[#71878c]">Engagement</span></span>
+                          <span><strong className="block text-[#173f47]">{formatMetric(insight.likes)}</strong><span className="text-[#71878c]">Likes</span></span>
+                          <span><strong className="block text-[#173f47]">{formatMetric(insight.comments)}</strong><span className="text-[#71878c]">Reacties</span></span>
+                          <span><strong className="block text-[#173f47]">{formatMetric(insight.saved)}</strong><span className="text-[#71878c]">Bewaard</span></span>
+                          <span><strong className="block text-[#173f47]">{formatMetric(insight.shares)}</strong><span className="text-[#71878c]">Gedeeld</span></span>
+                          <span><strong className="block text-[#173f47]">{formatMetric(interactions)}</strong><span className="text-[#71878c]">Interactie</span></span>
+                        </div>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            </>
+          ) : !isLoadingInsights && !insightsError ? (
+            <div className="grid min-h-52 place-items-center rounded-2xl border border-dashed border-[#c9dddd] text-center">
+              <div>
+                <BarChart3 className="mx-auto size-8 text-[#39717d]" />
+                <p className="mt-3 font-serif text-xl text-[#123943]">Nog geen geplaatste posts gevonden</p>
+                <p className="mt-1 text-sm text-[#6a8389]">Statistieken verschijnen zodra de app posts heeft geregistreerd.</p>
+              </div>
+            </div>
+          ) : null}
+
+          <p className="text-xs leading-5 text-[#7b9094]">
+            Instagram-cijfers kunnen vertraagd binnenkomen. Engagement is hier berekend als totale interacties gedeeld door bereik.
+          </p>
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button variant="outline" className="rounded-full">Sluiten</Button>
+            </DialogClose>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <AlertDialog
         open={Boolean(itemToRemove)}
