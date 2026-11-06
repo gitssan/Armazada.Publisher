@@ -7,12 +7,16 @@ import {
   Check,
   Camera,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Cloud,
+  Eye,
   Film,
   FolderOpen,
   Heart,
   Image as ImageIcon,
   LoaderCircle,
+  Maximize2,
   MoreHorizontal,
   MessageCircle,
   Play,
@@ -178,6 +182,12 @@ function formatMetric(value: number | null | undefined) {
   return new Intl.NumberFormat("nl-NL", { notation: "compact", maximumFractionDigits: 1 }).format(value);
 }
 
+function previewUrl(item: LibraryItem) {
+  return item.source === "drive" && item.driveFileId
+    ? `/api/drive/media?id=${encodeURIComponent(item.driveFileId)}`
+    : item.url;
+}
+
 function compareFileNames(left: LibraryItem, right: LibraryItem) {
   return left.name.localeCompare(right.name, "nl", { numeric: true, sensitivity: "base" });
 }
@@ -321,21 +331,33 @@ export default function Home() {
   const [insightsError, setInsightsError] = useState("");
   const [itemToRemove, setItemToRemove] = useState<LibraryItem | null>(null);
   const [randomPreview, setRandomPreview] = useState<LibraryItem[]>([]);
+  const [randomPreviewItemId, setRandomPreviewItemId] = useState<string | null>(null);
   const [isRandomPreviewOpen, setIsRandomPreviewOpen] = useState(false);
   const [libraryFilter, setLibraryFilter] = useState<LibraryFilter>("unpublished");
   const [mediaKindFilter, setMediaKindFilter] = useState<MediaKindFilter>("all");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+  const [showThumbnailControls, setShowThumbnailControls] = useState(true);
+  const [previewItemId, setPreviewItemId] = useState<string | null>(null);
   const folderInput = useRef<HTMLInputElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const storedCaption = window.localStorage.getItem("armazada-caption");
     if (storedCaption) setCaption(withoutAccountCredit(withCollaboratorCredits(storedCaption)));
+    const storedVisibility = window.localStorage.getItem("armazada-thumbnail-controls");
+    if (storedVisibility === "hidden") setShowThumbnailControls(false);
   }, []);
 
   useEffect(() => {
     window.localStorage.setItem("armazada-caption", caption);
   }, [caption]);
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      "armazada-thumbnail-controls",
+      showThumbnailControls ? "visible" : "hidden",
+    );
+  }, [showThumbnailControls]);
 
   useEffect(() => {
     fetch("/api/status", { cache: "no-store" })
@@ -393,6 +415,12 @@ export default function Home() {
       }),
     [sortedItems, libraryFilter, mediaKindFilter],
   );
+  const previewItem = items.find((item) => item.id === previewItemId) || null;
+  const previewIndex = previewItem
+    ? visibleItems.findIndex((item) => item.id === previewItem.id)
+    : -1;
+  const randomPreviewItem =
+    randomPreview.find((item) => item.id === randomPreviewItemId) || randomPreview[0] || null;
   const selectableVisibleItems = useMemo(
     () => visibleItems.filter((item) => item.status !== "published" && !item.forgotten),
     [visibleItems],
@@ -697,6 +725,12 @@ export default function Home() {
     });
   }
 
+  function navigatePreview(direction: -1 | 1) {
+    if (!visibleItems.length || previewIndex < 0) return;
+    const nextIndex = (previewIndex + direction + visibleItems.length) % visibleItems.length;
+    setPreviewItemId(visibleItems[nextIndex].id);
+  }
+
   function queueForRepublish(item: LibraryItem) {
     setItems((current) =>
       current.map((currentItem) =>
@@ -836,11 +870,14 @@ export default function Home() {
       return;
     }
     setRandomPreview(randomItems);
+    setRandomPreviewItemId(randomItems[0]?.id || null);
     setIsRandomPreviewOpen(true);
   }
 
   function refreshRandomPreview() {
-    setRandomPreview(chooseRandomMedia(randomCandidates, 5));
+    const randomItems = chooseRandomMedia(randomCandidates, 5);
+    setRandomPreview(randomItems);
+    setRandomPreviewItemId(randomItems[0]?.id || null);
   }
 
   function refreshRandomPreviewItem(itemId: string) {
@@ -854,6 +891,7 @@ export default function Home() {
 
       const sameKind = available.filter((item) => item.kind === target.kind);
       const replacement = shuffleItems(sameKind.length ? sameKind : available)[0];
+      if (randomPreviewItemId === itemId) setRandomPreviewItemId(replacement.id);
       return current.map((item) => (item.id === itemId ? replacement : item));
     });
   }
@@ -1203,25 +1241,41 @@ export default function Home() {
                     </button>
                   </div>
                   <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-                    <div className="flex rounded-full border border-[#d2e1e1] bg-white p-1" aria-label="Filter op mediatype">
-                      {([
-                        ["all", "Alles"],
-                        ["image", "Foto’s"],
-                        ["video", "Video’s"],
-                      ] as const).map(([value, label]) => (
-                        <button
-                          key={value}
-                          type="button"
-                          className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
-                            mediaKindFilter === value
-                              ? "bg-[#dceceb] text-[#174e57]"
-                              : "text-[#6b858a] hover:text-[#234e57]"
-                          }`}
-                          onClick={() => setMediaKindFilter(value)}
-                        >
-                          {label}
-                        </button>
-                      ))}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="flex rounded-full border border-[#d2e1e1] bg-white p-1" aria-label="Filter op mediatype">
+                        {([
+                          ["all", "Alles"],
+                          ["image", "Foto’s"],
+                          ["video", "Video’s"],
+                        ] as const).map(([value, label]) => (
+                          <button
+                            key={value}
+                            type="button"
+                            className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
+                              mediaKindFilter === value
+                                ? "bg-[#dceceb] text-[#174e57]"
+                                : "text-[#6b858a] hover:text-[#234e57]"
+                            }`}
+                            onClick={() => setMediaKindFilter(value)}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                      <button
+                        type="button"
+                        className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+                          showThumbnailControls
+                            ? "border-[#d2e1e1] bg-white text-[#52747b] hover:text-[#173f47]"
+                            : "border-[#8fbfc0] bg-[#dceceb] text-[#174e57]"
+                        }`}
+                        onClick={() => setShowThumbnailControls((current) => !current)}
+                        aria-pressed={!showThumbnailControls}
+                        title={showThumbnailControls ? "Verberg knoppen en labels op de thumbnails" : "Toon knoppen en labels op de thumbnails"}
+                      >
+                        {showThumbnailControls ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+                        {showThumbnailControls ? "Rustige weergave" : "Knoppen tonen"}
+                      </button>
                     </div>
                     {selectableVisibleItems.length > 0 ? (
                       <label className="flex cursor-pointer items-center gap-3 text-sm font-medium text-[#163d46]">
@@ -1267,13 +1321,26 @@ export default function Home() {
                   {visibleItems.map((item, index) => (
                     <article
                       key={item.id}
-                      className={`group relative aspect-[4/5] overflow-hidden rounded-2xl border-2 bg-[#d9e8e7] transition ${
+                      className={`group relative aspect-[4/5] cursor-zoom-in overflow-hidden rounded-2xl border-2 bg-[#d9e8e7] transition ${
                         item.forgotten
                           ? "border-[#87999c] opacity-65"
                           : item.selected
                             ? "border-[#2d7e83]"
                             : "border-transparent opacity-65"
                       }`}
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`Open grote preview van ${item.name}`}
+                      onClick={(event) => {
+                        if ((event.target as HTMLElement).closest("button, a, input, label")) return;
+                        setPreviewItemId(item.id);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          setPreviewItemId(item.id);
+                        }
+                      }}
                     >
                       {item.kind === "image" ? (
                         // eslint-disable-next-line @next/next/no-img-element
@@ -1284,6 +1351,8 @@ export default function Home() {
                       ) : (
                         <video className="h-full w-full object-cover" src={item.url} muted preload="metadata" />
                       )}
+                      {showThumbnailControls ? (
+                        <>
                       <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/35 to-transparent px-3 pb-3 pt-10 text-white">
                         <p className="truncate text-xs font-medium">{item.name}</p>
                         <p className="mt-1 text-[11px] text-white/70">
@@ -1407,6 +1476,8 @@ export default function Home() {
                       >
                         <Trash2 className="size-3.5" />
                       </button>
+                        </>
+                      ) : null}
                     </article>
                   ))}
                   </div>
@@ -1576,6 +1647,138 @@ export default function Home() {
           </div>
         </aside>
       </div>
+
+      <Dialog
+        open={Boolean(previewItem)}
+        onOpenChange={(open) => {
+          if (!open) setPreviewItemId(null);
+        }}
+      >
+        <DialogContent className="max-h-[94vh] overflow-y-auto rounded-3xl border-[#d7e3e3] p-0 sm:max-w-6xl">
+          {previewItem ? (
+            <div className="grid min-h-[70vh] lg:grid-cols-[minmax(0,1fr)_320px]">
+              <div className="relative grid min-h-[55vh] place-items-center overflow-hidden bg-[#061c25] p-4 lg:min-h-[78vh]">
+                {previewItem.kind === "image" ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    key={previewItem.id}
+                    className="max-h-[82vh] max-w-full object-contain shadow-2xl"
+                    src={previewUrl(previewItem)}
+                    alt={previewItem.name}
+                  />
+                ) : (
+                  <video
+                    key={previewItem.id}
+                    className="max-h-[82vh] max-w-full bg-black shadow-2xl"
+                    src={previewUrl(previewItem)}
+                    controls
+                    playsInline
+                    preload="metadata"
+                  />
+                )}
+
+                {visibleItems.length > 1 ? (
+                  <>
+                    <button
+                      type="button"
+                      className="absolute left-4 top-1/2 grid size-11 -translate-y-1/2 place-items-center rounded-full border border-white/30 bg-black/45 text-white backdrop-blur transition hover:bg-black/70"
+                      onClick={() => navigatePreview(-1)}
+                      aria-label="Vorige media"
+                    >
+                      <ChevronLeft className="size-6" />
+                    </button>
+                    <button
+                      type="button"
+                      className="absolute right-4 top-1/2 grid size-11 -translate-y-1/2 place-items-center rounded-full border border-white/30 bg-black/45 text-white backdrop-blur transition hover:bg-black/70"
+                      onClick={() => navigatePreview(1)}
+                      aria-label="Volgende media"
+                    >
+                      <ChevronRight className="size-6" />
+                    </button>
+                  </>
+                ) : null}
+
+                <span className="absolute bottom-4 left-4 flex items-center gap-2 rounded-full bg-black/50 px-3 py-1.5 text-xs text-white/90 backdrop-blur">
+                  <Maximize2 className="size-3.5" />
+                  {previewIndex + 1} van {visibleItems.length}
+                </span>
+              </div>
+
+              <aside className="flex flex-col bg-white p-6 lg:p-7">
+                <DialogHeader className="text-left">
+                  <DialogTitle className="break-words font-serif text-2xl text-[#123943]">
+                    {previewItem.name}
+                  </DialogTitle>
+                  <DialogDescription className="leading-6 text-[#58717a]">
+                    Grote preview van de geselecteerde {previewItem.kind === "video" ? "video" : "foto"}.
+                  </DialogDescription>
+                </DialogHeader>
+
+                <div className="mt-6 space-y-3 rounded-2xl border border-[#d6e5e4] bg-[#f5faf9] p-4 text-sm">
+                  <div className="flex justify-between gap-4"><span className="text-[#6a8389]">Type</span><strong className="text-[#153d46]">{previewItem.kind === "video" ? "Video" : "Foto"}</strong></div>
+                  <div className="flex justify-between gap-4"><span className="text-[#6a8389]">Datum</span><strong className="text-right text-[#153d46]">{formatMediaDate(previewItem.displayDate)}</strong></div>
+                  <div className="flex justify-between gap-4"><span className="text-[#6a8389]">Grootte</span><strong className="text-[#153d46]">{formatSize(previewItem.size)}</strong></div>
+                  <div className="flex justify-between gap-4"><span className="text-[#6a8389]">Bron</span><strong className="text-[#153d46]">{previewItem.source === "drive" ? "Google Drive" : "Laptop"}</strong></div>
+                  <div className="flex justify-between gap-4"><span className="text-[#6a8389]">Status</span><strong className="text-right text-[#153d46]">{previewItem.status === "published" ? "Geplaatst" : previewItem.status === "removed" ? "Verwijderd op Instagram" : previewItem.status === "error" ? "Eerder mislukt" : "Nog te plaatsen"}</strong></div>
+                </div>
+
+                <div className="mt-6 space-y-3">
+                  {previewItem.status !== "published" && !previewItem.forgotten ? (
+                    <Button
+                      className="w-full rounded-full bg-[#0a4d5a] text-white hover:bg-[#073e48]"
+                      onClick={() =>
+                        setItems((current) =>
+                          current.map((item) =>
+                            item.id === previewItem.id
+                              ? { ...item, selected: !item.selected }
+                              : item,
+                          ),
+                        )
+                      }
+                    >
+                      <Check />
+                      {previewItem.selected ? "Deselecteer voor publicatie" : "Selecteer voor publicatie"}
+                    </Button>
+                  ) : null}
+                  {previewItem.status === "published" ? (
+                    <Button
+                      className="w-full rounded-full bg-[#0a4d5a] text-white hover:bg-[#073e48]"
+                      onClick={() => {
+                        queueForRepublish(previewItem);
+                        setPreviewItemId(null);
+                      }}
+                    >
+                      <RefreshCw /> Nogmaals publiceren
+                    </Button>
+                  ) : null}
+                  <Button
+                    variant="outline"
+                    className="w-full rounded-full border-[#b9d2d5]"
+                    onClick={() =>
+                      void updatePreference(previewItem, {
+                        favorite: !previewItem.favorite,
+                        forgotten: false,
+                      })
+                    }
+                  >
+                    <Heart className={previewItem.favorite ? "fill-current text-rose-600" : ""} />
+                    {previewItem.favorite ? "Verwijder uit favorieten" : "Maak favoriet"}
+                  </Button>
+                </div>
+
+                <div className="mt-auto pt-6">
+                  <p className="mb-4 text-xs leading-5 text-[#7b9094]">
+                    Gebruik de pijlen om door de huidige selectie te bladeren. Video’s kun je hier direct afspelen.
+                  </p>
+                  <DialogClose asChild>
+                    <Button variant="ghost" className="w-full rounded-full text-[#52747b]">Sluiten</Button>
+                  </DialogClose>
+                </div>
+              </aside>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={isInsightsOpen} onOpenChange={setIsInsightsOpen}>
         <DialogContent className="max-h-[90vh] overflow-y-auto rounded-3xl border-[#d7e3e3] sm:max-w-5xl">
@@ -1771,10 +1974,13 @@ export default function Home() {
         open={isRandomPreviewOpen}
         onOpenChange={(open) => {
           setIsRandomPreviewOpen(open);
-          if (!open) setRandomPreview([]);
+          if (!open) {
+            setRandomPreview([]);
+            setRandomPreviewItemId(null);
+          }
         }}
       >
-        <DialogContent className="max-h-[90vh] overflow-y-auto rounded-3xl border-[#d7e3e3] sm:max-w-4xl">
+        <DialogContent className="max-h-[92vh] overflow-y-auto rounded-3xl border-[#d7e3e3] sm:max-w-6xl">
           <DialogHeader>
             <DialogTitle className="font-serif text-2xl text-[#123943]">
               Preview willekeurige selectie
@@ -1784,41 +1990,108 @@ export default function Home() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-            {randomPreview.map((item, index) => (
-              <article
-                key={item.id}
-                className="relative aspect-[4/5] overflow-hidden rounded-2xl bg-[#d9e8e7]"
-              >
-                {item.kind === "image" || item.source === "drive" ? (
+          <div className="flex justify-end">
+            <button
+              type="button"
+              className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+                showThumbnailControls
+                  ? "border-[#d2e1e1] bg-white text-[#52747b]"
+                  : "border-[#8fbfc0] bg-[#dceceb] text-[#174e57]"
+              }`}
+              onClick={() => setShowThumbnailControls((current) => !current)}
+            >
+              {showThumbnailControls ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+              {showThumbnailControls ? "Maak thumbnails rustig" : "Toon thumbnailknoppen"}
+            </button>
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+            <div className="relative grid min-h-[50vh] place-items-center overflow-hidden rounded-2xl bg-[#061c25] p-4">
+              {randomPreviewItem ? (
+                randomPreviewItem.kind === "image" ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img className="h-full w-full object-cover" src={item.url} alt={item.name} />
+                  <img
+                    key={randomPreviewItem.id}
+                    className="max-h-[66vh] max-w-full object-contain"
+                    src={previewUrl(randomPreviewItem)}
+                    alt={randomPreviewItem.name}
+                  />
                 ) : (
-                  <video className="h-full w-full object-cover" src={item.url} muted preload="metadata" />
-                )}
-                <span className="absolute left-2 top-2 rounded-full bg-white/90 px-2 py-1 text-[10px] font-bold text-[#174e57] shadow-sm">
-                  {index + 1}
-                </span>
-                <span className="absolute right-2 top-2 flex items-center gap-1 rounded-full bg-black/55 px-2 py-1 text-[10px] font-semibold text-white">
-                  {item.kind === "video" ? <Play className="size-3 fill-current" /> : <ImageIcon className="size-3" />}
-                  {item.kind === "video" ? "Video" : "Foto"}
-                </span>
-                <button
-                  type="button"
-                  className="absolute inset-x-2 bottom-14 z-10 flex items-center justify-center gap-1 rounded-full bg-white/90 px-2 py-1.5 text-[10px] font-bold text-[#174e57] shadow-sm transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-45"
-                  disabled={randomCandidates.every((candidate) =>
-                    randomPreview.some((previewItem) => previewItem.id === candidate.id),
-                  )}
-                  onClick={() => refreshRandomPreviewItem(item.id)}
-                >
-                  <RefreshCw className="size-3" /> Vervang
-                </button>
-                <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent px-3 pb-3 pt-10 text-white">
-                  <p className="truncate text-xs font-semibold">{item.name}</p>
-                  <p className="mt-1 text-[10px] text-white/70">{formatMediaDate(item.displayDate)}</p>
+                  <video
+                    key={randomPreviewItem.id}
+                    className="max-h-[66vh] max-w-full bg-black"
+                    src={previewUrl(randomPreviewItem)}
+                    controls
+                    playsInline
+                    preload="metadata"
+                  />
+                )
+              ) : null}
+              {randomPreviewItem ? (
+                <div className="absolute inset-x-4 bottom-4 rounded-2xl bg-black/55 px-4 py-3 text-white backdrop-blur">
+                  <p className="truncate text-sm font-semibold">{randomPreviewItem.name}</p>
+                  <p className="mt-1 text-xs text-white/70">
+                    {randomPreviewItem.kind === "video" ? "Video" : "Foto"} · {formatMediaDate(randomPreviewItem.displayDate)} · {formatSize(randomPreviewItem.size)}
+                  </p>
                 </div>
-              </article>
-            ))}
+              ) : null}
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-2 lg:content-start">
+              {randomPreview.map((item, index) => (
+                <article
+                  key={item.id}
+                  className={`relative aspect-[4/5] cursor-pointer overflow-hidden rounded-2xl border-2 bg-[#d9e8e7] transition ${
+                    randomPreviewItem?.id === item.id ? "border-[#2d7e83] shadow-md" : "border-transparent"
+                  }`}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`Bekijk grote preview van ${item.name}`}
+                  onClick={(event) => {
+                    if ((event.target as HTMLElement).closest("button")) return;
+                    setRandomPreviewItemId(item.id);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      setRandomPreviewItemId(item.id);
+                    }
+                  }}
+                >
+                  {item.kind === "image" || item.source === "drive" ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img className="h-full w-full object-cover" src={item.url} alt={item.name} />
+                  ) : (
+                    <video className="h-full w-full object-cover" src={item.url} muted preload="metadata" />
+                  )}
+                  {showThumbnailControls ? (
+                    <>
+                      <span className="absolute left-2 top-2 rounded-full bg-white/90 px-2 py-1 text-[10px] font-bold text-[#174e57] shadow-sm">
+                        {index + 1}
+                      </span>
+                      <span className="absolute right-2 top-2 flex items-center gap-1 rounded-full bg-black/55 px-2 py-1 text-[10px] font-semibold text-white">
+                        {item.kind === "video" ? <Play className="size-3 fill-current" /> : <ImageIcon className="size-3" />}
+                        {item.kind === "video" ? "Video" : "Foto"}
+                      </span>
+                      <button
+                        type="button"
+                        className="absolute inset-x-2 bottom-14 z-10 flex items-center justify-center gap-1 rounded-full bg-white/90 px-2 py-1.5 text-[10px] font-bold text-[#174e57] shadow-sm transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-45"
+                        disabled={randomCandidates.every((candidate) =>
+                          randomPreview.some((previewItem) => previewItem.id === candidate.id),
+                        )}
+                        onClick={() => refreshRandomPreviewItem(item.id)}
+                      >
+                        <RefreshCw className="size-3" /> Vervang
+                      </button>
+                      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent px-3 pb-3 pt-10 text-white">
+                        <p className="truncate text-xs font-semibold">{item.name}</p>
+                        <p className="mt-1 text-[10px] text-white/70">{formatMediaDate(item.displayDate)}</p>
+                      </div>
+                    </>
+                  ) : null}
+                </article>
+              ))}
+            </div>
           </div>
 
           <DialogFooter className="gap-2 sm:justify-between">

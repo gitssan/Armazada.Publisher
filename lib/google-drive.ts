@@ -110,9 +110,11 @@ async function createServiceAccountToken(env: GoogleDriveEnv) {
   return result.access_token;
 }
 
-async function authorizedFetch(url: string, env: GoogleDriveEnv) {
+async function authorizedFetch(url: string, env: GoogleDriveEnv, init: RequestInit = {}) {
   const token = await createServiceAccountToken(env);
-  return fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  const headers = new Headers(init.headers);
+  headers.set("Authorization", `Bearer ${token}`);
+  return fetch(url, { ...init, headers });
 }
 
 async function readGoogleError(response: Response) {
@@ -246,6 +248,22 @@ export async function fetchGoogleDriveThumbnail(fileId: string, env: GoogleDrive
   const response = await authorizedFetch(url.toString(), env);
   if (!response.ok) throw new Error(await readGoogleError(response));
   return response;
+}
+
+export async function fetchGoogleDriveMedia(
+  fileId: string,
+  env: GoogleDriveEnv,
+  range?: string | null,
+) {
+  const file = await getGoogleDriveFile(fileId, env);
+  const url = new URL(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}`);
+  url.searchParams.set("alt", "media");
+  url.searchParams.set("supportsAllDrives", "true");
+  const response = await authorizedFetch(url.toString(), env, {
+    headers: range ? { Range: range } : undefined,
+  });
+  if (!response.ok && response.status !== 206) throw new Error(await readGoogleError(response));
+  return { response, file };
 }
 
 export type { GoogleDriveEnv };
