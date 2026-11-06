@@ -209,7 +209,7 @@ function collaboratorStatusLabel(status?: string) {
     case "declined":
       return "Geweigerd";
     default:
-      return "Niet verifieerbaar";
+      return "Nog niet bevestigd";
   }
 }
 
@@ -631,11 +631,14 @@ export default function Home() {
       const removedInLibrary = candidates.filter((item) => removed.has(item.fingerprint)).length;
       const removedFromHistory = Math.max(0, removedTotal - removedInLibrary);
       const otherCount = result.otherInstagramPosts || 0;
-      const pendingCollaborators = (result.collaborations || []).reduce(
+      const unresolvedCollaborators = (result.collaborations || []).reduce(
         (count, collaboration) =>
           count +
           collaboration.details.filter(
-            (detail) => detail.inviteStatus?.toLowerCase() === "pending",
+            (detail) => {
+              const status = detail.inviteStatus?.toLowerCase();
+              return status !== "accepted" && status !== "declined";
+            },
           ).length,
         0,
       );
@@ -648,7 +651,7 @@ export default function Home() {
         0,
       );
       setInstagramSyncNotice(
-        `Instagram gecontroleerd om ${time} · ${activeCount} app-${activeCount === 1 ? "post" : "posts"} aanwezig · ${removedInLibrary} verwijderd en opnieuw beschikbaar${removedFromHistory ? ` · ${removedFromHistory} oudere verwijderde ${removedFromHistory === 1 ? "plaatsing" : "plaatsingen"}` : ""} · ${pendingCollaborators} collab-${pendingCollaborators === 1 ? "uitnodiging staat" : "uitnodigingen staan"} nog open${declinedCollaborators ? ` · ${declinedCollaborators} geweigerd` : ""} · ${otherCount} overige Instagram-${otherCount === 1 ? "post" : "posts"}.`,
+        `Instagram gecontroleerd om ${time} · ${activeCount} app-${activeCount === 1 ? "post" : "posts"} aanwezig · ${removedInLibrary} verwijderd en opnieuw beschikbaar${removedFromHistory ? ` · ${removedFromHistory} oudere verwijderde ${removedFromHistory === 1 ? "plaatsing" : "plaatsingen"}` : ""} · ${unresolvedCollaborators} collab-${unresolvedCollaborators === 1 ? "uitnodiging is" : "uitnodigingen zijn"} nog niet geaccepteerd${declinedCollaborators ? ` · ${declinedCollaborators} geweigerd` : ""} · ${otherCount} overige Instagram-${otherCount === 1 ? "post" : "posts"}.`,
       );
     } catch (error) {
       setInstagramSyncNotice(
