@@ -192,10 +192,11 @@ export async function publishToInstagram(
   return { mediaId, collaboration };
 }
 
-async function verifyInstagramCollaborators(
+export async function verifyInstagramCollaborators(
   mediaId: string,
   requested: string[],
   env: PublishingEnv,
+  delayMs = 1500,
 ): Promise<CollaboratorVerification> {
   if (!requested.length) {
     return { requested: [], status: "not_requested", details: [], checkedAt: null };
@@ -209,7 +210,7 @@ async function verifyInstagramCollaborators(
   url.searchParams.set("fields", "username,invite_status");
   url.searchParams.set("access_token", accessToken);
 
-  await new Promise((resolve) => setTimeout(resolve, 1500));
+  if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
   const checkedAt = Date.now();
   try {
     const response = await fetch(url.toString(), { headers: { Accept: "application/json" } });
@@ -217,14 +218,14 @@ async function verifyInstagramCollaborators(
       return {
         requested,
         status: "unverified",
-        details: [],
+        details: requested.map((username) => ({ username, inviteStatus: "Unknown" })),
         checkedAt,
         warning: "De post is geplaatst, maar Instagram liet de collaborator-uitnodigingen niet automatisch controleren.",
       };
     }
     const payload = (await response.json().catch(() => ({}))) as JsonRecord;
     const data = Array.isArray(payload.data) ? payload.data : [];
-    const details = data.flatMap((entry) => {
+    const returnedDetails = data.flatMap((entry) => {
       const record = entry as JsonRecord;
       const username = typeof record.username === "string" ? record.username : "";
       if (!username) return [];
@@ -233,22 +234,38 @@ async function verifyInstagramCollaborators(
         inviteStatus: typeof record.invite_status === "string" ? record.invite_status : undefined,
       }];
     });
-    const confirmed = new Set(details.map((detail) => detail.username.toLowerCase()));
-    const missing = requested.filter((username) => !confirmed.has(username.toLowerCase()));
+    const returnedByUsername = new Map(
+      returnedDetails.map((detail) => [detail.username.toLowerCase(), detail]),
+    );
+    const details = requested.map(
+      (username) =>
+        returnedByUsername.get(username.toLowerCase()) || { username, inviteStatus: "Unknown" },
+    );
+    const accepted = details.filter(
+      (detail) => detail.inviteStatus?.toLowerCase() === "accepted",
+    );
+    const declined = details.filter(
+      (detail) => detail.inviteStatus?.toLowerCase() === "declined",
+    );
+    const unknown = details.filter(
+      (detail) => !detail.inviteStatus || detail.inviteStatus.toLowerCase() === "unknown",
+    );
     return {
       requested,
-      status: missing.length ? "partial" : "confirmed",
+      status: accepted.length === requested.length ? "confirmed" : "partial",
       details,
       checkedAt,
-      warning: missing.length
-        ? `Instagram bevestigde de collaborator-uitnodiging niet voor @${missing.join(", @")}. Controleer deze post handmatig.`
-        : undefined,
+      warning: declined.length
+        ? `Instagram meldt dat @${declined.map((detail) => detail.username).join(", @")} de collaborator-uitnodiging heeft geweigerd.`
+        : unknown.length
+          ? `Instagram gaf nog geen controleerbare collaborator-status voor @${unknown.map((detail) => detail.username).join(", @")}.`
+          : undefined,
     };
   } catch {
     return {
       requested,
       status: "unverified",
-      details: [],
+      details: requested.map((username) => ({ username, inviteStatus: "Unknown" })),
       checkedAt,
       warning: "De post is geplaatst, maar de collaborator-uitnodigingen konden niet worden gecontroleerd.",
     };

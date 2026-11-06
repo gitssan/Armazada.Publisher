@@ -106,11 +106,52 @@ export async function listPublishedMedia() {
   const database = getDatabase();
   const result = await database
     .prepare(
-      `SELECT fingerprint, instagram_media_id AS instagramMediaId
+      `SELECT fingerprint, instagram_media_id AS instagramMediaId,
+              collaborators_requested AS collaboratorsRequested
        FROM published_media`,
     )
-    .all<{ fingerprint: string; instagramMediaId: string }>();
-  return result.results;
+    .all<{ fingerprint: string; instagramMediaId: string; collaboratorsRequested: string }>();
+  return result.results.map((record) => {
+    try {
+      return {
+        ...record,
+        collaboratorsRequested: JSON.parse(record.collaboratorsRequested) as string[],
+      };
+    } catch {
+      return { ...record, collaboratorsRequested: [] as string[] };
+    }
+  });
+}
+
+export async function updateCollaborationStatuses(
+  updates: Array<{
+    fingerprint: string;
+    status: "not_requested" | "confirmed" | "partial" | "unverified";
+    details: Array<{ username: string; inviteStatus?: string }>;
+    checkedAt: number | null;
+  }>,
+) {
+  if (!updates.length) return;
+  const database = getDatabase();
+  for (let offset = 0; offset < updates.length; offset += 50) {
+    const chunk = updates.slice(offset, offset + 50);
+    await database.batch(
+      chunk.map((update) =>
+        database
+          .prepare(
+            `UPDATE published_media
+             SET collaborator_status = ?, collaborator_details = ?, collaborator_checked_at = ?
+             WHERE fingerprint = ?`,
+          )
+          .bind(
+            update.status,
+            JSON.stringify(update.details),
+            update.checkedAt,
+            update.fingerprint,
+          ),
+      ),
+    );
+  }
 }
 
 export async function listPublishedMediaForInsights() {

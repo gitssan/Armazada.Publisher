@@ -73,6 +73,11 @@ type CollaborationStatus =
   | "partial"
   | "unverified";
 
+type CollaboratorDetail = {
+  username: string;
+  inviteStatus?: string;
+};
+
 type LibraryItem = {
   id: string;
   source: "drive" | "local";
@@ -89,6 +94,7 @@ type LibraryItem = {
   favorite: boolean;
   forgotten: boolean;
   collaborationStatus: CollaborationStatus;
+  collaborationDetails: CollaboratorDetail[];
   selected: boolean;
   status: "idle" | "publishing" | "published" | "removed" | "error";
 };
@@ -121,6 +127,7 @@ type PublishResult = {
   warning?: string;
   collaboration?: {
     status?: CollaborationStatus;
+    details?: CollaboratorDetail[];
   };
 };
 
@@ -130,6 +137,11 @@ type InstagramSyncResult = {
   checkedAt?: number;
   instagramPostCount?: number;
   otherInstagramPosts?: number;
+  collaborations?: Array<{
+    fingerprint: string;
+    status: CollaborationStatus;
+    details: CollaboratorDetail[];
+  }>;
   error?: string;
 };
 
@@ -186,6 +198,32 @@ function previewUrl(item: LibraryItem) {
   return item.source === "drive" && item.driveFileId
     ? `/api/drive/media?id=${encodeURIComponent(item.driveFileId)}`
     : item.url;
+}
+
+function collaboratorStatusLabel(status?: string) {
+  switch (status?.toLowerCase()) {
+    case "accepted":
+      return "Geaccepteerd";
+    case "pending":
+      return "Nog open";
+    case "declined":
+      return "Geweigerd";
+    default:
+      return "Niet verifieerbaar";
+  }
+}
+
+function collaboratorStatusClasses(status?: string) {
+  switch (status?.toLowerCase()) {
+    case "accepted":
+      return "bg-emerald-50 text-emerald-800 ring-emerald-200";
+    case "pending":
+      return "bg-amber-50 text-amber-800 ring-amber-200";
+    case "declined":
+      return "bg-red-50 text-red-700 ring-red-200";
+    default:
+      return "bg-slate-100 text-slate-700 ring-slate-200";
+  }
 }
 
 function compareFileNames(left: LibraryItem, right: LibraryItem) {
@@ -265,6 +303,7 @@ async function makeItem(file: File): Promise<LibraryItem | null> {
     favorite: false,
     forgotten: false,
     collaborationStatus: "not_requested",
+    collaborationDetails: [],
     selected: true,
     status: "idle",
   };
@@ -499,26 +538,44 @@ export default function Home() {
       const result = (await response.json()) as {
         published?: string[];
         removed?: string[];
-        collaborations?: Array<{ fingerprint: string; status: CollaborationStatus }>;
+        collaborations?: Array<{
+          fingerprint: string;
+          status: CollaborationStatus;
+          details: CollaboratorDetail[];
+        }>;
       };
       const published = new Set(result.published || []);
       const removed = new Set(result.removed || []);
       const collaborations = new Map(
         (result.collaborations || []).map((collaboration) => [
           collaboration.fingerprint,
-          collaboration.status,
+          collaboration,
         ]),
       );
       setItems((current) =>
         current.map((item) => {
-          const collaborationStatus = collaborations.get(item.fingerprint) ?? item.collaborationStatus;
+          const collaboration = collaborations.get(item.fingerprint);
+          const collaborationStatus = collaboration?.status ?? item.collaborationStatus;
+          const collaborationDetails = collaboration?.details ?? item.collaborationDetails;
           if (published.has(item.fingerprint)) {
-            return { ...item, status: "published", selected: false, collaborationStatus };
+            return {
+              ...item,
+              status: "published",
+              selected: false,
+              collaborationStatus,
+              collaborationDetails,
+            };
           }
           if (removed.has(item.fingerprint)) {
-            return { ...item, status: "removed", selected: false, collaborationStatus };
+            return {
+              ...item,
+              status: "removed",
+              selected: false,
+              collaborationStatus,
+              collaborationDetails,
+            };
           }
-          return { ...item, collaborationStatus };
+          return { ...item, collaborationStatus, collaborationDetails };
         }),
       );
     } catch {
@@ -537,17 +594,30 @@ export default function Home() {
 
       const active = new Set(result.active || []);
       const removed = new Set(result.removed || []);
+      const collaborations = new Map(
+        (result.collaborations || []).map((collaboration) => [
+          collaboration.fingerprint,
+          collaboration,
+        ]),
+      );
       const candidateFingerprints = new Set(candidates.map((item) => item.fingerprint));
       setItems((current) =>
         current.map((item) => {
           if (!candidateFingerprints.has(item.fingerprint)) return item;
+          const collaboration = collaborations.get(item.fingerprint);
+          const collaborationFields = collaboration
+            ? {
+                collaborationStatus: collaboration.status,
+                collaborationDetails: collaboration.details,
+              }
+            : {};
           if (active.has(item.fingerprint)) {
-            return { ...item, status: "published", selected: false };
+            return { ...item, status: "published", selected: false, ...collaborationFields };
           }
           if (removed.has(item.fingerprint)) {
-            return { ...item, status: "removed", selected: false };
+            return { ...item, status: "removed", selected: false, ...collaborationFields };
           }
-          return item;
+          return { ...item, ...collaborationFields };
         }),
       );
 
@@ -561,8 +631,24 @@ export default function Home() {
       const removedInLibrary = candidates.filter((item) => removed.has(item.fingerprint)).length;
       const removedFromHistory = Math.max(0, removedTotal - removedInLibrary);
       const otherCount = result.otherInstagramPosts || 0;
+      const pendingCollaborators = (result.collaborations || []).reduce(
+        (count, collaboration) =>
+          count +
+          collaboration.details.filter(
+            (detail) => detail.inviteStatus?.toLowerCase() === "pending",
+          ).length,
+        0,
+      );
+      const declinedCollaborators = (result.collaborations || []).reduce(
+        (count, collaboration) =>
+          count +
+          collaboration.details.filter(
+            (detail) => detail.inviteStatus?.toLowerCase() === "declined",
+          ).length,
+        0,
+      );
       setInstagramSyncNotice(
-        `Instagram gecontroleerd om ${time} · ${activeCount} app-${activeCount === 1 ? "post" : "posts"} aanwezig · ${removedInLibrary} verwijderd en opnieuw beschikbaar${removedFromHistory ? ` · ${removedFromHistory} oudere verwijderde ${removedFromHistory === 1 ? "plaatsing" : "plaatsingen"}` : ""} · ${otherCount} overige Instagram-${otherCount === 1 ? "post" : "posts"}.`,
+        `Instagram gecontroleerd om ${time} · ${activeCount} app-${activeCount === 1 ? "post" : "posts"} aanwezig · ${removedInLibrary} verwijderd en opnieuw beschikbaar${removedFromHistory ? ` · ${removedFromHistory} oudere verwijderde ${removedFromHistory === 1 ? "plaatsing" : "plaatsingen"}` : ""} · ${pendingCollaborators} collab-${pendingCollaborators === 1 ? "uitnodiging staat" : "uitnodigingen staan"} nog open${declinedCollaborators ? ` · ${declinedCollaborators} geweigerd` : ""} · ${otherCount} overige Instagram-${otherCount === 1 ? "post" : "posts"}.`,
       );
     } catch (error) {
       setInstagramSyncNotice(
@@ -675,6 +761,7 @@ export default function Home() {
           favorite: current?.favorite ?? false,
           forgotten: current?.forgotten ?? false,
           collaborationStatus: current?.collaborationStatus ?? "unknown",
+          collaborationDetails: current?.collaborationDetails ?? [],
           selected:
             current?.selected ?? (current?.status !== "published" && !current?.forgotten),
           status: current?.status ?? "idle",
@@ -807,6 +894,8 @@ export default function Home() {
                   selected: false,
                   collaborationStatus:
                     result.collaboration?.status ?? currentItem.collaborationStatus,
+                  collaborationDetails:
+                    result.collaboration?.details ?? currentItem.collaborationDetails,
                 }
               : currentItem,
           ),
@@ -1721,6 +1810,37 @@ export default function Home() {
                   <div className="flex justify-between gap-4"><span className="text-[#6a8389]">Bron</span><strong className="text-[#153d46]">{previewItem.source === "drive" ? "Google Drive" : "Laptop"}</strong></div>
                   <div className="flex justify-between gap-4"><span className="text-[#6a8389]">Status</span><strong className="text-right text-[#153d46]">{previewItem.status === "published" ? "Geplaatst" : previewItem.status === "removed" ? "Verwijderd op Instagram" : previewItem.status === "error" ? "Eerder mislukt" : "Nog te plaatsen"}</strong></div>
                 </div>
+
+                {previewItem.collaborationDetails.length ? (
+                  <div className="mt-4 rounded-2xl border border-[#d6e5e4] bg-white p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm font-semibold text-[#153d46]">Collaborators</p>
+                      <span className="text-[10px] uppercase tracking-[0.12em] text-[#71878c]">
+                        Instagram-status
+                      </span>
+                    </div>
+                    <div className="mt-3 space-y-2">
+                      {previewItem.collaborationDetails.map((detail) => (
+                        <div
+                          key={detail.username}
+                          className="flex items-center justify-between gap-3 rounded-xl bg-[#f7faf9] px-3 py-2"
+                        >
+                          <span className="truncate text-sm font-medium text-[#173f47]">
+                            @{detail.username}
+                          </span>
+                          <span
+                            className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-semibold ring-1 ring-inset ${collaboratorStatusClasses(detail.inviteStatus)}`}
+                          >
+                            {collaboratorStatusLabel(detail.inviteStatus)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="mt-3 text-[11px] leading-4 text-[#71878c]">
+                      Wordt opnieuw bijgewerkt wanneer je bovenaan op Controleer Instagram klikt.
+                    </p>
+                  </div>
+                ) : null}
 
                 <div className="mt-6 space-y-3">
                   {previewItem.status !== "published" && !previewItem.forgotten ? (
