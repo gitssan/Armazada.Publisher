@@ -700,27 +700,43 @@ export default function Home() {
       const removedInLibrary = candidates.filter((item) => removed.has(item.fingerprint)).length;
       const removedFromHistory = Math.max(0, removedTotal - removedInLibrary);
       const otherCount = result.otherInstagramPosts || 0;
-      const unresolvedCollaborators = (result.collaborations || []).reduce(
-        (count, collaboration) =>
-          count +
-          collaboration.details.filter(
-            (detail) => {
-              const status = detail.inviteStatus?.toLowerCase();
-              return status !== "accepted" && status !== "declined";
-            },
-          ).length,
+      const collaboratorCounts = (
+        matches: (status: string | undefined) => boolean,
+      ) => {
+        const counts = new Map<string, { username: string; count: number }>();
+        for (const collaboration of result.collaborations || []) {
+          for (const detail of collaboration.details) {
+            if (!matches(detail.inviteStatus?.toLowerCase())) continue;
+            const key = detail.username.toLowerCase();
+            const current = counts.get(key);
+            counts.set(key, {
+              username: detail.username,
+              count: (current?.count || 0) + 1,
+            });
+          }
+        }
+        return [...counts.values()].sort((left, right) => left.username.localeCompare(right.username));
+      };
+      const unresolvedByCollaborator = collaboratorCounts(
+        (status) => status !== "accepted" && status !== "declined",
+      );
+      const declinedByCollaborator = collaboratorCounts((status) => status === "declined");
+      const unresolvedCollaborators = unresolvedByCollaborator.reduce(
+        (total, collaborator) => total + collaborator.count,
         0,
       );
-      const declinedCollaborators = (result.collaborations || []).reduce(
-        (count, collaboration) =>
-          count +
-          collaboration.details.filter(
-            (detail) => detail.inviteStatus?.toLowerCase() === "declined",
-          ).length,
+      const declinedCollaborators = declinedByCollaborator.reduce(
+        (total, collaborator) => total + collaborator.count,
         0,
       );
+      const unresolvedBreakdown = unresolvedByCollaborator
+        .map((collaborator) => `@${collaborator.username}: ${collaborator.count}`)
+        .join(", ");
+      const declinedBreakdown = declinedByCollaborator
+        .map((collaborator) => `@${collaborator.username}: ${collaborator.count}`)
+        .join(", ");
       setInstagramSyncNotice(
-        `Instagram gecontroleerd om ${time} · ${activeCount} app-${activeCount === 1 ? "publicatie" : "publicaties"} aanwezig · ${removedInLibrary} bestanden volledig verwijderd en opnieuw beschikbaar${removedFromHistory ? ` · ${removedFromHistory} oudere verwijderde ${removedFromHistory === 1 ? "plaatsing" : "plaatsingen"}` : ""} · ${unresolvedCollaborators} collab-${unresolvedCollaborators === 1 ? "uitnodiging is" : "uitnodigingen zijn"} nog niet geaccepteerd${declinedCollaborators ? ` · ${declinedCollaborators} geweigerd` : ""} · ${otherCount} overige Instagram-${otherCount === 1 ? "post" : "posts"}.`,
+        `Instagram gecontroleerd om ${time} · ${activeCount} app-${activeCount === 1 ? "publicatie" : "publicaties"} aanwezig · ${removedInLibrary} bestanden volledig verwijderd en opnieuw beschikbaar${removedFromHistory ? ` · ${removedFromHistory} oudere verwijderde ${removedFromHistory === 1 ? "plaatsing" : "plaatsingen"}` : ""} · ${unresolvedCollaborators} collab-${unresolvedCollaborators === 1 ? "uitnodiging is" : "uitnodigingen zijn"} nog niet geaccepteerd${unresolvedBreakdown ? ` (${unresolvedBreakdown})` : ""}${declinedCollaborators ? ` · ${declinedCollaborators} geweigerd (${declinedBreakdown})` : ""} · ${otherCount} overige Instagram-${otherCount === 1 ? "post" : "posts"}.`,
       );
     } catch (error) {
       setInstagramSyncNotice(
