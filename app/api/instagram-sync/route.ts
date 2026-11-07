@@ -6,7 +6,7 @@ import {
   updateInstagramMediaPresence,
 } from "@/db/media-history";
 import {
-  listInstagramMediaIds,
+  listInstagramMedia,
   publishingConfiguration,
   verifyInstagramCollaborators,
   type PublishingEnv,
@@ -19,10 +19,11 @@ export async function POST() {
   }
 
   try {
-    const [records, instagramIds] = await Promise.all([
+    const [records, instagramMedia] = await Promise.all([
       listPublishedMedia(),
-      listInstagramMediaIds(runtimeEnv),
+      listInstagramMedia(runtimeEnv),
     ]);
+    const instagramIds = new Set(instagramMedia.map((item) => item.id));
     const checkedAt = Date.now();
     const presence = records.map((record) => ({
       publicationId: record.publicationId,
@@ -84,7 +85,8 @@ export async function POST() {
       };
     });
     const trackedIds = new Set(records.map((record) => record.instagramMediaId));
-    const otherInstagramPosts = [...instagramIds].filter((id) => !trackedIds.has(id)).length;
+    const otherInstagramMedia = instagramMedia.filter((item) => !trackedIds.has(item.id));
+    const otherInstagramPosts = otherInstagramMedia.length;
 
     return Response.json(
       {
@@ -94,6 +96,8 @@ export async function POST() {
         removed,
         collaborations,
         publications,
+        instagramMedia,
+        otherInstagramMedia,
         instagramPostCount: instagramIds.size,
         otherInstagramPosts,
       },

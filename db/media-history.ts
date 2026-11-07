@@ -130,6 +130,7 @@ export async function listPublishedMedia() {
   const result = await database
     .prepare(
       `SELECT publication_id AS publicationId, fingerprint,
+              file_name AS fileName, media_type AS mediaType,
               instagram_media_id AS instagramMediaId,
               published_at AS publishedAt,
               instagram_status AS instagramStatus,
@@ -144,6 +145,8 @@ export async function listPublishedMedia() {
     .all<{
       publicationId: number;
       fingerprint: string;
+      fileName: string;
+      mediaType: "image" | "video";
       instagramMediaId: string;
       publishedAt: number;
       instagramStatus: "active" | "removed";

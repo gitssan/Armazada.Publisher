@@ -1220,6 +1220,12 @@ export default function Home() {
               <span className="size-1.5 rounded-full bg-amber-300" />
               {configuration.ready ? "Klaar om te publiceren" : "Instagram nog koppelen"}
             </span>
+            <a
+              href="/instagram-overzicht"
+              className="hidden items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-white/20 sm:flex"
+            >
+              <BarChart3 className="size-4" /> Instagram-overzicht
+            </a>
             <Button className="rounded-full bg-[#d6efeb] text-[#08232c] hover:bg-white" size="sm">
               <Camera className="size-4" />
               <span className="hidden sm:inline">@armazada.atlantic</span>

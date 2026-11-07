@@ -37,6 +37,17 @@ type InstagramMediaInsights = {
   warning?: string;
 };
 
+type InstagramMediaSummary = {
+  id: string;
+  mediaType?: string;
+  mediaProductType?: string;
+  mediaUrl?: string;
+  thumbnailUrl?: string;
+  permalink?: string;
+  timestamp?: string;
+  caption?: string;
+};
+
 function requireValue(value: string | undefined, name: string) {
   if (!value) throw new Error(`${name} ontbreekt in de app-instellingen.`);
   return value;
@@ -272,17 +283,20 @@ export async function verifyInstagramCollaborators(
   }
 }
 
-export async function listInstagramMediaIds(env: PublishingEnv) {
+export async function listInstagramMedia(env: PublishingEnv) {
   const accountId = requireValue(env.INSTAGRAM_ACCOUNT_ID, "Instagram account-ID");
   const accessToken = requireValue(env.INSTAGRAM_ACCESS_TOKEN, "Instagram access-token");
   const version = env.META_GRAPH_VERSION || "v25.0";
   const baseUrl = `https://graph.instagram.com/${version}`;
   const firstPage = new URL(`${baseUrl}/${encodeURIComponent(accountId)}/media`);
-  firstPage.searchParams.set("fields", "id");
+  firstPage.searchParams.set(
+    "fields",
+    "id,media_type,media_product_type,media_url,thumbnail_url,permalink,timestamp,caption",
+  );
   firstPage.searchParams.set("limit", "100");
   firstPage.searchParams.set("access_token", accessToken);
 
-  const ids = new Set<string>();
+  const media: InstagramMediaSummary[] = [];
   let nextUrl: string | null = firstPage.toString();
   let pageCount = 0;
 
@@ -296,8 +310,21 @@ export async function listInstagramMediaIds(env: PublishingEnv) {
     const payload = await parseJson(response);
     const data = Array.isArray(payload.data) ? payload.data : [];
     for (const entry of data) {
-      const id = (entry as JsonRecord).id;
-      if (typeof id === "string" && id) ids.add(id);
+      const record = entry as JsonRecord;
+      const id = record.id;
+      if (typeof id !== "string" || !id) continue;
+      media.push({
+        id,
+        mediaType: typeof record.media_type === "string" ? record.media_type : undefined,
+        mediaProductType:
+          typeof record.media_product_type === "string" ? record.media_product_type : undefined,
+        mediaUrl: typeof record.media_url === "string" ? record.media_url : undefined,
+        thumbnailUrl:
+          typeof record.thumbnail_url === "string" ? record.thumbnail_url : undefined,
+        permalink: typeof record.permalink === "string" ? record.permalink : undefined,
+        timestamp: typeof record.timestamp === "string" ? record.timestamp : undefined,
+        caption: typeof record.caption === "string" ? record.caption : undefined,
+      });
     }
 
     const next = (payload.paging as JsonRecord | undefined)?.next;
@@ -312,7 +339,11 @@ export async function listInstagramMediaIds(env: PublishingEnv) {
     nextUrl = parsedNext.toString();
   }
 
-  return ids;
+  return media;
+}
+
+export async function listInstagramMediaIds(env: PublishingEnv) {
+  return new Set((await listInstagramMedia(env)).map((item) => item.id));
 }
 
 function metricValue(payload: JsonRecord, metric: string) {
@@ -377,4 +408,4 @@ export async function getInstagramMediaInsights(
   };
 }
 
-export type { InstagramMediaInsights, PublishingEnv };
+export type { InstagramMediaInsights, InstagramMediaSummary, PublishingEnv };
